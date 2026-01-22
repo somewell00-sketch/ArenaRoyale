@@ -85,3 +85,9 @@ export function createInitialWorld({ seed, mapSize, mapData, totalPlayers = 12, 
 export function cloneWorld(world){
   return structuredClone(world);
 }
+
+
+// Utility: returns an array with player + all NPC tributes
+export function getAllActors(world){
+  return [world.entities.player, ...Object.values(world.entities.npcs)];
+}
