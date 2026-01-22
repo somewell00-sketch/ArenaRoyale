@@ -437,6 +437,7 @@ function updateUiState(){
 
   endBtn.onclick = () => {
     // end day in current position
+    const { nextWorld } = simEndDay(world);
     world = nextWorld;
     resetTurnDraftForNewDay();
     saveToLocal(world);
@@ -444,6 +445,7 @@ function updateUiState(){
   };
 
   document.getElementById("regen").onclick = () => startNewGame(world.meta.mapSize);
+
   document.getElementById("resetProgress").onclick = () => {
     world.flags.visitedAreas = [1];
     world.entities.player.areaId = 1;
@@ -452,9 +454,16 @@ function updateUiState(){
     saveToLocal(world);
     sync();
   };
-  document.getElementById("saveLocal").onclick = () => { saveToLocal(world); alert("Salvo no navegador."); };
+
+  document.getElementById("saveLocal").onclick = () => {
+    saveToLocal(world);
+    alert("Salvo no navegador.");
+  };
+
   document.getElementById("export").onclick = () => downloadJSON(world);
+
   document.getElementById("import").onchange = async (e) => {
+    const file = e.target.files?.[0];
     if(!file) return;
     try{
       const loaded = await uploadJSON(file);
@@ -462,6 +471,25 @@ function updateUiState(){
       if(!world.turnDraft) resetTurnDraftForNewDay();
       saveToLocal(world);
       renderGame();
-    } catch(err){ alert(err.message || "Falha ao importar."); }
+    } catch(err){
+      alert(err.message || "Falha ao importar.");
+    }
   };
-  document.getElementById("clearLocal").onclick = () => { clearLocal(); alert("Save apagado."); };
+
+  document.getElementById("clearLocal").onclick = () => {
+    clearLocal();
+    alert("Save apagado.");
+  };
+
+  // Palette shortcut placeholder
+  window.onkeydown = (e) => {
+    if (e.key === "1"){
+      paletteIndex = 0;
+      sync();
+    }
+  };
+
+  sync();
+}
+
+renderStart();
