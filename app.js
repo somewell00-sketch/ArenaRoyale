@@ -9,6 +9,11 @@ const root = document.getElementById("root");
 let world = null;
 let paletteIndex = 0;
 
+// UI-only planning state (does NOT mutate world)
+let plannedToAreaId = null; // destination preview for today's MOVE
+let plannedAction1 = "DO_NOTHING"; // ATTACK | DEFEND | DO_NOTHING
+let plannedAction2 = "STAY";       // MOVE | STAY
+
 function renderStart(){
   root.innerHTML = `
     <div class="screen">
@@ -76,10 +81,12 @@ function renderGame(){
         </div>
 
         <div class="row">
-          <button id="nextDay" class="btn">Passar o dia</button>
+          <button id="nextDay" class="btn">Planejar e encerrar o dia</button>
           <button id="regen" class="btn">Novo mapa</button>
           <button id="resetProgress" class="btn">Reiniciar progresso</button>
         </div>
+
+        <div class="pill" id="plannedPill">Plano do dia: —</div>
 
         <div class="row">
           <button id="saveLocal" class="btn">Salvar</button>
@@ -115,6 +122,35 @@ function renderGame(){
         <div class="hint">Mapa = UI • Simulação por dias • Água = lago/pântano/rios</div>
       </main>
     </div>
+
+    <div id="dayModal" class="modalOverlay">
+      <div class="modal">
+        <div class="h1">Decisão do Dia</div>
+        <div class="muted small">Escolha 2 ações fixas na ordem: Ação 1 (Ataque/Proteção) e Ação 2 (Mover/Permanecer).</div>
+        <div class="modalGrid">
+          <label for="action1">Ação 1</label>
+          <select id="action1" class="select">
+            <option value="ATTACK">Atacar</option>
+            <option value="DEFEND">Proteger (Escudo)</option>
+            <option value="DO_NOTHING">Não fazer nada</option>
+          </select>
+
+          <label for="action2">Ação 2</label>
+          <select id="action2" class="select">
+            <option value="STAY">Permanecer</option>
+            <option value="MOVE">Mover</option>
+          </select>
+
+          <label>Destino</label>
+          <div class="muted" id="plannedDestination">—</div>
+        </div>
+
+        <div class="modalFooter">
+          <button id="cancelDay" class="btn">Cancelar</button>
+          <button id="confirmDay" class="btn">Confirmar e avançar</button>
+        </div>
+      </div>
+    </div>
   `;
 
   const dayEl = document.getElementById("day");
@@ -122,6 +158,7 @@ function renderGame(){
   const swatch = document.getElementById("swatch");
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
+  const plannedPill = document.getElementById("plannedPill");
   const infoNum = document.getElementById("infoNum");
   const infoBiome = document.getElementById("infoBiome");
   const infoColor = document.getElementById("infoColor");
@@ -133,7 +170,7 @@ function renderGame(){
   const mapUI = new MapUI({
     canvas,
     onAreaClick: (id) => {
-      // clicar sempre mostra info; só move se for visitável
+      // clicar sempre mostra info; só PLANEJA move se for visitável
       const cur = world.entities.player.areaId;
       const adj = world.map.adjById[String(cur)] || [];
       const canMove = (id === cur) || adj.includes(id);
@@ -141,19 +178,9 @@ function renderGame(){
       setFocus(id);
 
       if (canMove){
-        // registrar ação do jogador no dia atual (sem avançar o dia ainda)
-        ensureReplaySlot(world);
-        world.replay.playerActionsByDay[world.meta.day - 1].push({ type: "MOVE", payload: { toAreaId: id } });
-
-        // aplicar movimento imediatamente como UX (a regra real está no motor também)
-        // (isso mantém “mapa como UI” ainda ok porque é só uma projeção; o motor vai confirmar no advanceDay)
-        world.entities.player.areaId = id;
-        const v = new Set(world.flags.visitedAreas);
-        v.add(id); v.add(1);
-        world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
-
-        saveToLocal(world);
-        sync();
+        plannedToAreaId = id;
+        plannedAction2 = (id === cur) ? "STAY" : "MOVE";
+        sync(); // UI only
       }
     }
   });
@@ -185,18 +212,81 @@ function renderGame(){
     dayEl.textContent = String(world.meta.day);
     seedEl.textContent = String(world.meta.seed);
     visitedCount.textContent = `Visitadas: ${world.flags.visitedAreas.length}`;
-    mapUI.setData({ world, paletteIndex });
+    mapUI.setData({ world, paletteIndex, ui: { plannedToAreaId } });
     setFocus(focusedId);
+
+    const cur = world.entities.player.areaId;
+    const destText = (plannedToAreaId == null)
+      ? "—"
+      : (plannedToAreaId === cur ? `Permanecer (Área ${cur})` : `Mover para Área ${plannedToAreaId}`);
+    plannedPill.textContent = `Plano do dia: A1=${plannedAction1} • A2=${plannedAction2} • ${destText}`;
   }
 
   // Buttons
   document.getElementById("nextDay").onclick = () => {
-    // motor aplica as ações do dia (e NPC intents)
-    const actions = world.replay.playerActionsByDay[world.meta.day - 1] || [];
-    const { nextWorld } = advanceDay(world, actions);
+    openDayModal();
+  };
 
+  const dayModal = document.getElementById("dayModal");
+  const action1Select = document.getElementById("action1");
+  const action2Select = document.getElementById("action2");
+  const plannedDestination = document.getElementById("plannedDestination");
+
+  function openDayModal(){
+    action1Select.value = plannedAction1;
+    action2Select.value = plannedAction2;
+    const cur = world.entities.player.areaId;
+    plannedDestination.textContent = (plannedToAreaId == null)
+      ? "Nenhum destino selecionado no mapa"
+      : (plannedToAreaId === cur ? `Área ${cur} (permanecer)` : `Área ${plannedToAreaId}`);
+    dayModal.classList.add("show");
+  }
+
+  function closeDayModal(){
+    dayModal.classList.remove("show");
+  }
+
+  action1Select.onchange = (e) => { plannedAction1 = e.target.value; sync(); };
+  action2Select.onchange = (e) => { plannedAction2 = e.target.value; sync(); };
+
+  document.getElementById("cancelDay").onclick = () => closeDayModal();
+
+  document.getElementById("confirmDay").onclick = () => {
+    // Build PlayerAction[] for today ONLY when confirmed
+    const actions = [];
+
+    // Ação 1
+    if (plannedAction1 === "ATTACK"){
+      // placeholder: no target selection yet
+      actions.push({ type: "ATTACK", payload: {} });
+    } else if (plannedAction1 === "DEFEND"){
+      actions.push({ type: "DEFEND", payload: {} });
+    } else {
+      actions.push({ type: "DO_NOTHING", payload: {} });
+    }
+
+    // Ação 2
+    if (plannedAction2 === "MOVE"){
+      const cur = world.entities.player.areaId;
+      const to = (plannedToAreaId == null) ? cur : plannedToAreaId;
+      actions.push({ type: "MOVE", payload: { toAreaId: to } });
+    } else {
+      actions.push({ type: "STAY", payload: {} });
+    }
+
+    ensureReplaySlot(world);
+    world.replay.playerActionsByDay[world.meta.day - 1] = actions;
+
+    const { nextWorld } = advanceDay(world, actions);
     world = nextWorld;
+
+    // reset planning for next day (UI only)
+    plannedToAreaId = null;
+    plannedAction1 = "DO_NOTHING";
+    plannedAction2 = "STAY";
+
     saveToLocal(world);
+    closeDayModal();
     sync();
   };
 

@@ -102,10 +102,11 @@ export class MapUI {
     canvas.addEventListener("click", (e) => this.handleClick(e));
   }
 
-  setData({ world, paletteIndex=0 }){
+  setData({ world, paletteIndex=0, ui=null }){
     this.world = world;
     this.paletteIndex = paletteIndex;
     this.geom = world.map.uiGeom;
+    this.ui = ui;
     this.render();
   }
 
@@ -239,6 +240,23 @@ export class MapUI {
         drawPath(ctx, cell.poly);
         ctx.stroke();
         ctx.restore();
+      }
+    }
+
+    // planned move destination (UI only)
+    {
+      const planned = this.ui?.plannedToAreaId;
+      if (planned != null && planned !== currentId){
+        const cell = cells.find(x => x.id === planned);
+        if (cell){
+          ctx.save();
+          ctx.strokeStyle = "rgba(255,255,255,0.85)";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([4,6]);
+          drawPath(ctx, cell.poly);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     }
 
