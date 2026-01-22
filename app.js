@@ -114,6 +114,7 @@ function startNewGame(mapSize, totalPlayers, playerDistrict){
 }
 
 function renderGame(){
+  const $id = (id) => document.getElementById(id);
   world.turnDraft = {
     stance: null,
     route: [],
@@ -207,13 +208,13 @@ function renderGame(){
   const swatch = document.getElementById("swatch");
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
-  const bannerEl = document.getElementById("banner");
-  const commitBtn = document.getElementById("commitAction");
-  const endBtn = document.getElementById("endDay");
-  const movesLeftEl = document.getElementById("movesLeft");
-  const entityLocsEl = document.getElementById("entityLocs");
-  const occupantsEl = document.getElementById("occupants");
-  const debugTributes = document.getElementById("debugTributes");
+  const bannerEl = $id("banner");
+  const commitBtn = $id("commit");
+  const endBtn = $id("endDay");
+  const movesLeftEl = $id("movesLeft");
+  const entityLocsEl = $id("entityLocs");
+  const occupantsEl = $id("occupants");
+  const debugTributes = $id("debugTributes");
 
   const infoNum = document.getElementById("infoNum");
   const infoBiome = document.getElementById("infoBiome");
@@ -268,6 +269,8 @@ function renderGame(){
       sync();
     }
   });
+  // initial data to avoid hover errors
+  mapUI.setData({ world, paletteIndex });
 
   function planMoveTo(id){
   if(!world) return;
@@ -360,16 +363,16 @@ function updateUiState(){
 
     const used = world.turnDraft?.route?.length || 0;
     const rem = Math.max(0, 3 - used);
-    movesLeftEl.textContent = `Você pode se mover até 3 áreas hoje. Restantes: ${rem}`;
+    if(movesLeftEl) movesLeftEl.textContent = `Você pode se mover até 3 áreas hoje. Restantes: ${rem}`;
 
     if(world.turnDraft?.phase === "ACTION"){
-      bannerEl.textContent = "Você deve fazer uma ação nesta área antes de se mover para a próxima.";
-      commitBtn.style.display = "";
-      endBtn.style.display = "none";
+      if(bannerEl) bannerEl.textContent = "Você deve fazer uma ação nesta área antes de se mover para a próxima.";
+      if(commitBtn) commitBtn.style.display = "";
+      if(endBtn) endBtn.style.display = "none";
     } else {
-      bannerEl.textContent = "Você sobreviveu mais um dia. Escolha uma nova área para ir.";
-      commitBtn.style.display = "none";
-      endBtn.style.display = "";
+      if(bannerEl) bannerEl.textContent = "Você sobreviveu mais um dia. Escolha uma nova área para ir.";
+      if(commitBtn) commitBtn.style.display = "none";
+      if(endBtn) endBtn.style.display = "";
     }
 
     const lines = [];
@@ -377,10 +380,10 @@ function updateUiState(){
     for(const npc of Object.values(world.entities.npcs)){
       lines.push(`${npc.name}: área ${npc.areaId}`);
     }
-    entityLocsEl.value = lines.join("\n");
+    if(entityLocsEl) entityLocsEl.value = lines.join("\n");
   }
 
-  commitBtn.onclick = () => {
+  if(commitBtn) commitBtn.onclick = () => {
     showModal({
       title: "Commit Action",
       bodyHtml: "Escolha uma ação para esta área.",
@@ -435,7 +438,7 @@ function updateUiState(){
     sync();
   }
 
-  endBtn.onclick = () => {
+  if(endBtn) endBtn.onclick = () => {
     // end day in current position
     const { nextWorld } = simEndDay(world);
     world = nextWorld;
@@ -444,9 +447,11 @@ function updateUiState(){
     renderGame();
   };
 
-  document.getElementById("regen").onclick = () => startNewGame(world.meta.mapSize);
+  const __el_regen = $id("regen");
+  if(__el_regen) __el_regen.onclick = () => startNewGame(world.meta.mapSize);
 
-  document.getElementById("resetProgress").onclick = () => {
+  const __el_resetProgress = $id("resetProgress");
+  if(__el_resetProgress) __el_resetProgress.onclick = () => {
     world.flags.visitedAreas = [1];
     world.entities.player.areaId = 1;
     focusedId = 1;
@@ -455,14 +460,17 @@ function updateUiState(){
     sync();
   };
 
-  document.getElementById("saveLocal").onclick = () => {
+  const __el_saveLocal = $id("saveLocal");
+  if(__el_saveLocal) __el_saveLocal.onclick = () => {
     saveToLocal(world);
     alert("Salvo no navegador.");
   };
 
-  document.getElementById("export").onclick = () => downloadJSON(world);
+  const __el_export = $id("export");
+  if(__el_export) __el_export.onclick = () => downloadJSON(world);
 
-  document.getElementById("import").onchange = async (e) => {
+  const __el_import = $id("import");
+  if(__el_import) __el_import.onchange = async (e) => {
     const file = e.target.files?.[0];
     if(!file) return;
     try{
@@ -476,7 +484,8 @@ function updateUiState(){
     }
   };
 
-  document.getElementById("clearLocal").onclick = () => {
+  const __el_clearLocal = $id("clearLocal");
+  if(__el_clearLocal) __el_clearLocal.onclick = () => {
     clearLocal();
     alert("Save apagado.");
   };
