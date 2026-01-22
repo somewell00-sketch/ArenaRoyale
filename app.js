@@ -144,7 +144,17 @@ function renderGame(){
           </div>
         </div>
 
-        <div class="section">
+        
+<div class="section">
+  <div class="muted">Debug (temporary)</div>
+  <div class="row" style="margin-top:8px;">
+    <button id="debugAdvance" class="btn">Advance day</button>
+  </div>
+  <div class="muted small" style="margin-top:8px;">All tributes (HP/FP/Area)</div>
+  <div id="debugTributes" class="list" style="max-height:220px; overflow:auto;"></div>
+</div>
+
+<div class="section">
           <div class="muted">Tools</div>
           <div class="row" style="margin-top:8px;">
             <button id="regen" class="btn">New map</button>
@@ -192,6 +202,7 @@ function renderGame(){
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
   const occupantsEl = document.getElementById("occupants");
+  const debugTributes = document.getElementById("debugTributes");
   const commitBtn = document.getElementById("commit");
 
   const infoNum = document.getElementById("infoNum");
@@ -218,35 +229,82 @@ function renderGame(){
   });
 
   function planMoveTo(id){
+  if(!world) return;
   const p = world.entities.player;
-  const stepsAllowed = maxSteps(p);
 
-  // if action1 not committed yet, movement is just planning (no auto-advance)
-  const from = (uiState.plannedRoute.length ? uiState.plannedRoute[uiState.plannedRoute.length-1] : p.areaId);
-  const adj = world.map.adjById[String(from)] || [];
+  // You must commit Action 1 first to start moving.
+  if(!uiState.pendingAction1){
+    uiState.plannedRoute = [];
+    return;
+  }
+
+  const stepsAllowed = maxSteps(p);
 
   const area = world.map.areasById[String(id)];
   if(!area || area.isActive === false) return;
 
-  // Clicking your current node ends early: advance day if action1 committed
-  if(id === from){
-    if(uiState.pendingAction1){
-      advanceWithPlannedRoute();
-    }
+  const currentPos = (uiState.plannedRoute.length ? uiState.plannedRoute[uiState.plannedRoute.length-1] : p.areaId);
+
+  // Clicking your current node ends movement early (advance day)
+  if(id === currentPos){
+    finalizeDay();
     return;
   }
 
+  // Can't exceed max steps
+  if(uiState.plannedRoute.length >= stepsAllowed) return;
+
+  // Must be adjacent
+  const adj = world.map.adjById[String(currentPos)] || [];
   if(!adj.includes(id)) return;
 
-  // Append step
-  if(uiState.plannedRoute.length < stepsAllowed){
-    uiState.plannedRoute.push(id);
+  // Water rule: cannot enter water without bridge
+  if(area.hasWater && !area.hasBridge) return;
+
+  uiState.plannedRoute.push(id);
+
+  if(uiState.plannedRoute.length >= stepsAllowed){
+    finalizeDay();
+  }
+}
+
+function finalizeDay(){
+  if(!world) return;
+
+  const actions = [];
+
+  // Action 1 (mandatory)
+  const a1 = uiState.pendingAction1?.type || "DO_NOTHING";
+  if(a1 === "ATTACK"){
+    const targetId = uiState.pendingTargetId || null;
+    if(targetId){
+      actions.push({ source: "player", type: "ATTACK", payload: { targetId } });
+    } else {
+      actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
+    }
+  } else if (a1 === "DEFEND"){
+    actions.push({ source: "player", type: "DEFEND", payload: {} });
+  } else {
+    actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
   }
 
-  // Auto-advance once reach max steps AND action1 already committed
-  if(uiState.pendingAction1 && uiState.plannedRoute.length >= stepsAllowed){
-    advanceWithPlannedRoute();
+  // Action 2 (move or stay)
+  if(uiState.plannedRoute.length){
+    actions.push({ source: "player", type: "MOVE", payload: { route: uiState.plannedRoute.slice() } });
+  } else {
+    actions.push({ source: "player", type: "STAY", payload: {} });
   }
+
+  const intents = generateNpcIntents(world);
+  world = advanceDay(world, [...actions, ...intents]);
+
+  uiState.pendingAction1 = null;
+  uiState.pendingTargetId = null;
+  uiState.plannedRoute = [];
+  uiState.focusedAreaId = world.entities.player.areaId;
+
+  saveToLocal(world);
+  sync();
 }
 
   function sync(){
@@ -303,54 +361,34 @@ function renderGame(){
       ? occ.map(o => `<div class="pill"><strong>${escapeHtml(o.name)}</strong><span>${escapeHtml(districtTag(o.district))}</span></div>`).join("")
       : `<div class="muted small">${reveal ? "No one here" : "Unknown"}</div>`;
 
+    // Debug: list all tributes with HP/FP/Area
+    const all = [];
+    all.push({ id: \"player\", name: \"You\", district: p.district, hp: p.hp, fp: p.fp, areaId: p.areaId });
+    for(const npc of Object.values(world.entities.npcs)){
+      all.push({ id: npc.id, name: npc.name, district: npc.district, hp: npc.hp, fp: npc.fp, areaId: npc.areaId });
+    }
+    debugTributes.innerHTML = all.map(t => `
+      <div class=\"pill\" style=\"justify-content:space-between; gap:10px;\">
+        <span><strong>${escapeHtml(t.name)}</strong> <span class=\"muted small\">${escapeHtml(districtTag(t.district))}</span></span>
+        <span class=\"muted small\" style=\"font-family:var(--mono);\">HP ${t.hp} • FP ${t.fp} • A${t.areaId}</span>
+      </div>
+    `).join(\"\");
+
     mapUI.setData({ world, paletteIndex: 0 });
     mapUI.render();
   }
 
 
-function advanceWithPlannedRoute(){
-  const p = world.entities.player;
-
-  // Build player actions: Action 1 (mandatory but can be do nothing)
-  const actions = [];
-  const a1 = uiState.pendingAction1 || { type: "DO_NOTHING" };
-
-  if(a1.type === "ATTACK"){
-    const targetId = uiState.pendingTargetId;
-    if(targetId){
-      actions.push({ source: "player", type: "ATTACK", payload: { targetId } });
-    } else {
-      actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
-    }
-  } else if (a1.type === "DEFEND"){
-    actions.push({ source: "player", type: "DEFEND", payload: {} });
-  } else {
-    actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
-  }
-
-  // Action 2: Move if route exists else stay
-  if(uiState.plannedRoute.length){
-    actions.push({ source: "player", type: "MOVE", payload: { route: uiState.plannedRoute.slice() } });
-  } else {
-    actions.push({ source: "player", type: "STAY", payload: {} });
-  }
-
-  // NPC intents
-  const intents = generateNpcIntents(world);
-
-  world = advanceDay(world, [...actions, ...intents]);
-
-  // reset for next day
-  uiState.plannedRoute = [];
-  uiState.pendingAction1 = null;
-  uiState.pendingTargetId = null;
-  uiState.focusedAreaId = world.entities.player.areaId;
-
-  saveToLocal(world);
-  sync();
-}
 
   document.getElementById("commit").onclick = () => openCommitModal();
+  document.getElementById("debugAdvance").onclick = () => {
+    // allow advancing even without committing (defaults do nothing + stay)
+    if(!uiState.pendingAction1){
+      uiState.pendingAction1 = { type: "DO_NOTHING" };
+      uiState.pendingTargetId = null;
+    }
+    finalizeDay();
+  };
 
   document.getElementById("regen").onclick = () => {
     startNewGame(world.meta.mapSize, world.meta.totalPlayers || 12, world.entities.player.district || 12);
