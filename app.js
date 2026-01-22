@@ -12,6 +12,8 @@ let world = null;
 const uiState = {
   focusedAreaId: 1,
   plannedRoute: [],
+  pendingAction1: null,
+  pendingTargetId: null,
 };
 
 const DISTRICT_INFO = {
@@ -190,6 +192,7 @@ function renderGame(){
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
   const occupantsEl = document.getElementById("occupants");
+  const commitBtn = document.getElementById("commit");
 
   const infoNum = document.getElementById("infoNum");
   const infoBiome = document.getElementById("infoBiome");
@@ -215,21 +218,36 @@ function renderGame(){
   });
 
   function planMoveTo(id){
-    const from = world.entities.player.areaId;
-    const adj = world.map.adjById[String(from)] || [];
-    const area = world.map.areasById[String(id)];
-    if(!area || area.isActive === false) return;
+  const p = world.entities.player;
+  const stepsAllowed = maxSteps(p);
 
-    if(id === from){
-      uiState.plannedRoute = [];
-      return;
-    }
+  // if action1 not committed yet, movement is just planning (no auto-advance)
+  const from = (uiState.plannedRoute.length ? uiState.plannedRoute[uiState.plannedRoute.length-1] : p.areaId);
+  const adj = world.map.adjById[String(from)] || [];
 
-    // MVP: 1-step plan. (Later: multi-step)
-    if(adj.includes(id)){
-      uiState.plannedRoute = [id];
+  const area = world.map.areasById[String(id)];
+  if(!area || area.isActive === false) return;
+
+  // Clicking your current node ends early: advance day if action1 committed
+  if(id === from){
+    if(uiState.pendingAction1){
+      advanceWithPlannedRoute();
     }
+    return;
   }
+
+  if(!adj.includes(id)) return;
+
+  // Append step
+  if(uiState.plannedRoute.length < stepsAllowed){
+    uiState.plannedRoute.push(id);
+  }
+
+  // Auto-advance once reach max steps AND action1 already committed
+  if(uiState.pendingAction1 && uiState.plannedRoute.length >= stepsAllowed){
+    advanceWithPlannedRoute();
+  }
+}
 
   function sync(){
     if(!world) return;
@@ -262,6 +280,15 @@ function renderGame(){
     infoVisited.textContent = visited ? "Yes" : "No";
     infoPlan.textContent = uiState.plannedRoute.length ? uiState.plannedRoute.join(" → ") : "—";
 
+    if(commitBtn){
+      if(uiState.pendingAction1){
+        const label = uiState.pendingAction1.type === "ATTACK" ? "Attack" : uiState.pendingAction1.type === "DEFEND" ? "Defend" : "Do nothing";
+        commitBtn.textContent = `Action 1: ${label} • Move on map`;
+      } else {
+        commitBtn.textContent = "Commit Action 1";
+      }
+    }
+
     // Occupants: reveal if visited OR your current area
     const reveal = visited || (focus === p.areaId);
     const occ = [];
@@ -279,6 +306,49 @@ function renderGame(){
     mapUI.setData({ world, paletteIndex: 0 });
     mapUI.render();
   }
+
+
+function advanceWithPlannedRoute(){
+  const p = world.entities.player;
+
+  // Build player actions: Action 1 (mandatory but can be do nothing)
+  const actions = [];
+  const a1 = uiState.pendingAction1 || { type: "DO_NOTHING" };
+
+  if(a1.type === "ATTACK"){
+    const targetId = uiState.pendingTargetId;
+    if(targetId){
+      actions.push({ source: "player", type: "ATTACK", payload: { targetId } });
+    } else {
+      actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
+    }
+  } else if (a1.type === "DEFEND"){
+    actions.push({ source: "player", type: "DEFEND", payload: {} });
+  } else {
+    actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
+  }
+
+  // Action 2: Move if route exists else stay
+  if(uiState.plannedRoute.length){
+    actions.push({ source: "player", type: "MOVE", payload: { route: uiState.plannedRoute.slice() } });
+  } else {
+    actions.push({ source: "player", type: "STAY", payload: {} });
+  }
+
+  // NPC intents
+  const intents = generateNpcIntents(world);
+
+  world = advanceDay(world, [...actions, ...intents]);
+
+  // reset for next day
+  uiState.plannedRoute = [];
+  uiState.pendingAction1 = null;
+  uiState.pendingTargetId = null;
+  uiState.focusedAreaId = world.entities.player.areaId;
+
+  saveToLocal(world);
+  sync();
+}
 
   document.getElementById("commit").onclick = () => openCommitModal();
 
@@ -323,7 +393,7 @@ function renderGame(){
     overlay.innerHTML = `
       <div class="modal">
         <div class="h1" style="margin:0;">Commit actions (Day ${world.meta.day})</div>
-        <div class="muted small" style="margin-top:6px;">Two mandatory actions. Defaults: Do nothing + Stay.</div>
+        <div class="muted small" style="margin-top:6px;">Choose Action 1 now. Then move on the map (up to your max steps). The day advances automatically.</div>
 
         <div class="section">
           <h3>Action 1</h3>
@@ -345,35 +415,20 @@ function renderGame(){
           </div>
         </div>
 
-        <div class="section">
-          <h3>Action 2</h3>
-          <div class="row">
-            <button id="a2Move" class="btn">Move</button>
-            <button id="a2Stay" class="btn">Stay</button>
-          </div>
-          <div class="muted small" style="margin-top:6px;">
-            Planned route: <span style="font-family:var(--mono);">${uiState.plannedRoute.length ? uiState.plannedRoute.join(" → ") : "—"}</span>
-            • Max steps: <span style="font-family:var(--mono);">${maxSteps(p)}</span>
-          </div>
-        </div>
-
         <div class="row" style="margin-top:14px; justify-content:flex-end;">
           <button id="close" class="btn">Close</button>
-          <button id="confirm" class="btn primary">Confirm & Advance</button>
+          <button id="confirm" class="btn primary">Confirm Action 1</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
     let action1 = "DO_NOTHING";
-    let action2 = "STAY";
 
     const setBtnState = () => {
       overlay.querySelectorAll("button").forEach(b => b.style.outline = "");
       const b1 = overlay.querySelector(action1==="ATTACK" ? "#a1Attack" : action1==="DEFEND" ? "#a1Defend" : "#a1Nothing");
       if (b1) b1.style.outline = "2px solid var(--accent)";
-      const b2 = overlay.querySelector(action2==="MOVE" ? "#a2Move" : "#a2Stay");
-      if (b2) b2.style.outline = "2px solid var(--accent)";
     };
 
     overlay.querySelector("#close").onclick = () => overlay.remove();
@@ -382,50 +437,22 @@ function renderGame(){
     overlay.querySelector("#a1Defend").onclick = () => { action1="DEFEND"; setBtnState(); };
     overlay.querySelector("#a1Nothing").onclick = () => { action1="DO_NOTHING"; setBtnState(); };
 
-    overlay.querySelector("#a2Move").onclick = () => { action2="MOVE"; setBtnState(); };
-    overlay.querySelector("#a2Stay").onclick = () => { action2="STAY"; setBtnState(); };
-
     setBtnState();
 
     overlay.querySelector("#confirm").onclick = () => {
-      const actions = [];
-
-      // Action 1
+      // store Action 1, close modal, then player moves on the map
       if(action1 === "ATTACK"){
-        const targetId = overlay.querySelector("#target")?.value || null;
-        if(targetId){
-          actions.push({ source: "player", type: "ATTACK", payload: { targetId } });
-        } else {
-          actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
-        }
+        uiState.pendingAction1 = { type: "ATTACK" };
+        uiState.pendingTargetId = overlay.querySelector("#target")?.value || null;
       } else if (action1 === "DEFEND"){
-        actions.push({ source: "player", type: "DEFEND", payload: {} });
+        uiState.pendingAction1 = { type: "DEFEND" };
+        uiState.pendingTargetId = null;
       } else {
-        actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
+        uiState.pendingAction1 = { type: "DO_NOTHING" };
+        uiState.pendingTargetId = null;
       }
-
-      // Action 2
-      if (action2 === "MOVE"){
-        const route = uiState.plannedRoute.slice();
-        if(route.length){
-          actions.push({ source: "player", type: "MOVE", payload: { route } });
-        } else {
-          actions.push({ source: "player", type: "STAY", payload: {} });
-        }
-      } else {
-        actions.push({ source: "player", type: "STAY", payload: {} });
-      }
-
-      // NPC intents (already include 2 actions each)
-      const intents = generateNpcIntents(world);
-
-      // Engine advance (returns next world)
-      world = advanceDay(world, [...actions, ...intents]);
 
       uiState.plannedRoute = [];
-      uiState.focusedAreaId = world.entities.player.areaId;
-
-      saveToLocal(world);
       overlay.remove();
       sync();
     };

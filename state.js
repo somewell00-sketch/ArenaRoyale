@@ -650,7 +650,7 @@ export function createInitialWorld({ seed, mapSize, mapData, totalPlayers = 12, 
   };
 
   // Ensure area 1 is Cornucopia biome
-  const a1 = world.map.areasById?.["1"];
+  const a1 = world.map?.areasById?.["1"];
   if(a1){
     a1.biome = "Cornucopia";
   }
