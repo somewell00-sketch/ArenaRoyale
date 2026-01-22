@@ -105,7 +105,7 @@ export class MapUI {
   setData({ world, paletteIndex=0 }){
     this.world = world;
     this.paletteIndex = paletteIndex;
-    this.geom = world.map.uiGeom;
+    this.geom = world?.map?.uiGeom || null;
     this.render();
   }
 
@@ -176,16 +176,33 @@ export class MapUI {
       if(!area) continue;
 
       const isVisited = visited.has(c.id);
-      const alpha = isVisited ? 1.00 : 0.30;
-
-      ctx.fillStyle = rgbaFromHex(area.color, alpha);
+      if(!isVisited){
+        ctx.fillStyle = "#2a2f3a";
+      } else {
+        ctx.fillStyle = rgbaFromHex(area.color, 1.00);
+      }
       drawPath(ctx, c.poly);
       ctx.fill();
 
-      ctx.strokeStyle = "rgba(0,0,0,0.22)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([]);
-      ctx.stroke();
+const isClosed = (area.isActive === false);
+const isWarning = (area.willCloseOnDay === (this.world.meta.day + 1));
+
+if (isWarning){
+  ctx.strokeStyle = "rgba(220,60,60,0.95)";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([]);
+  ctx.stroke();
+} else if (isClosed){
+  ctx.strokeStyle = "rgba(0,0,0,0.55)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6,4]);
+  ctx.stroke();
+} else {
+  ctx.strokeStyle = "rgba(0,0,0,0.22)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([]);
+  ctx.stroke();
+}
 
       if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
       else drawSafeLabel(ctx, c.poly, String(c.id), false);

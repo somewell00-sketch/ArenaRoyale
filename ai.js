@@ -1,40 +1,33 @@
-// AI gera INTENTS. Não aplica nada no mundo.
 export function generateNpcIntents(world){
   const intents = [];
-  const currentDay = world.meta.day;
+  const day = world?.meta?.day ?? 1;
+  const seed = world?.meta?.seed ?? 1;
 
-  // exemplo simples: cada NPC tenta se mover para um vizinho aleatório
   for (const npc of Object.values(world.entities.npcs)){
+    // Action 1: default defend (placeholder)
+    intents.push({ source: npc.id, type: "DEFEND", payload: {} });
+
+    // Action 2: small move chance
     const adj = world.map.adjById[String(npc.areaId)] || [];
     if (adj.length === 0) continue;
 
-    // leve chance de descansar
-    const r = pseudoRandom(world.meta.seed, currentDay, npc.id);
-    if (r < 0.25){
-      intents.push({ source: npc.id, type: "REST", payload: {} });
-      continue;
+    const r = prng(seed, day, npc.id);
+    if (r < 0.55){
+      const idx = Math.floor(prng(seed+999, day, npc.id) * adj.length);
+      intents.push({ source: npc.id, type: "MOVE", payload: { route: [adj[idx]] } });
+    } else {
+      intents.push({ source: npc.id, type: "STAY", payload: {} });
     }
-
-    const idx = Math.floor(pseudoRandom(world.meta.seed + 999, currentDay, npc.id) * adj.length);
-    const toAreaId = adj[idx];
-
-    intents.push({ source: npc.id, type: "MOVE", payload: { toAreaId } });
   }
-
   return intents;
 }
 
-// determinístico sem RNG global (usa seed+day+npcId)
-function pseudoRandom(seed, day, str){
+function prng(seed, day, id){
   let h = 2166136261 >>> 0;
-  const s = `${seed}|${day}|${str}`;
+  const s = String(seed) + "|" + String(day) + "|" + String(id);
   for (let i=0;i<s.length;i++){
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  // xorshift
-  h ^= h << 13; h >>>= 0;
-  h ^= h >>> 17; h >>>= 0;
-  h ^= h << 5; h >>>= 0;
   return (h >>> 0) / 4294967296;
 }
