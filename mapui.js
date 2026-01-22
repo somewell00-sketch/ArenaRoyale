@@ -1,4 +1,4 @@
-import { BIOME_EN, PALETTES } from "./mapgen.js";
+import { BIOME_PT, PALETTES } from "./mapgen.js";
 
 function rgbaFromHex(hex, a){
   const h = hex.replace("#","");
@@ -176,23 +176,29 @@ export class MapUI {
       if(!area) continue;
 
       const isVisited = visited.has(c.id);
+      const alpha = isVisited ? 1.00 : 0.30;
 
-// Fog of war: unvisited areas are rendered with a dark bluish-gray,
-// and we don't reveal biome colors until visited.
-if (!isVisited){
-  ctx.fillStyle = "#2a2f3a";
-} else {
-  ctx.fillStyle = rgbaFromHex(area.color, 1.00);
-}
+      ctx.fillStyle = rgbaFromHex(area.color, alpha);
       drawPath(ctx, c.poly);
       ctx.fill();
+
+      // Closing warning: red border one day before area closes.
+      const willClose = area.willCloseOnDay;
+      if(area.isActive !== false && willClose != null && willClose === (this.world.meta.day + 1)){
+        ctx.save();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#ff3b3b";
+        ctx.stroke();
+        ctx.restore();
+      }
+
 
       ctx.strokeStyle = "rgba(0,0,0,0.22)";
       ctx.lineWidth = 1;
       ctx.setLineDash([]);
       ctx.stroke();
 
-      if (c.id === 1) drawSafeLabel(ctx, c.poly, "🏺", true);
+      if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
       else drawSafeLabel(ctx, c.poly, String(c.id), false);
     }
 
@@ -273,22 +279,9 @@ if (!isVisited){
     const visited = new Set(this.world.flags.visitedAreas).has(id);
     const visitable = this.isVisitable(id);
 
-    // Fog of war: if not visited, hide biome/water details.
-    if(!visited){
-      return {
-        id,
-        biome: "Unknown",
-        color: null,
-        hasWater: null,
-        visited,
-        visitable,
-        current: (id === cur)
-      };
-    }
-
     return {
       id,
-      biome: BIOME_EN[area.biome] || area.biome,
+      biome: BIOME_PT[area.biome] || area.biome,
       color: area.color,
       hasWater: !!area.hasWater,
       visited,

@@ -266,28 +266,8 @@ export const BIOME_PT = {
   fairy: "Bosque Fada",
   swamp: "Pântano",
   lake: "Lago",
-  industrial: "Área Industrial",
-  cornucopia: "Cornucópia"
+  industrial: "Área Industrial"
 };
-
-export const BIOME_EN = {
-  glacier: "Glacier",
-  tundra: "Tundra",
-  mountain: "Mountain",
-  desert: "Desert",
-  caatinga: "Caatinga",
-  savanna: "Savanna",
-  plains: "Plains",
-  woods: "Woods",
-  forest: "Forest",
-  jungle: "Jungle",
-  fairy: "Fairy Woods",
-  swamp: "Swamp",
-  lake: "Lake",
-  industrial: "Industrial Zone",
-  cornucopia: "Cornucopia"
-};
-
 
 export const PALETTES = [
   {
@@ -503,7 +483,12 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
       id: c.id,
       biome: c.biome,
       color: c.fillColor,
-      hasWater: !!c.hasWater
+      hasWater: !!c.hasWater,
+      // Movement rule: water needs a bridge. This is a coarse MVP flag per-area.
+      // (Future: per-edge water crossing.)
+      hasBridge: !!c.hasBridge,
+      isActive: true,
+      willCloseOnDay: null
     };
     adjById[String(c.id)] = Array.from(adj.get(c.id) || []).sort((a,b)=>a-b);
   }
