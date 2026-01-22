@@ -175,3 +175,32 @@ textarea{
 
 .list{ display:flex; flex-direction:column; gap:8px; margin:8px 0 0; }
 .pill strong{ margin-right:auto; }
+
+
+.banner{
+  font-size: 13px;
+  line-height: 1.35;
+  color: rgba(240,240,242,0.85);
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(17,17,19,0.55);
+  border: 1px solid rgba(250,208,44,0.18);
+}
+
+.eventList{
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.eventLine{
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(17,17,19,0.55);
+  border: 1px solid rgba(250,208,44,0.12);
+  color: rgba(240,240,242,0.88);
+  font-size: 13px;
+}

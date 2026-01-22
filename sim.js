@@ -2,7 +2,7 @@ import { cloneWorld } from "./state.js";
 
 export function isAdjacent(world, fromId, toId){
   const adj = world.map.adjById[String(fromId)] || [];
-  return adj.includes(toId);
+  return adj.includes(Number(toId));
 }
 
 export function maxSteps(entity){
@@ -16,57 +16,180 @@ function isAreaActive(world, areaId){
   return !!a && a.isActive !== false;
 }
 
-export function isRouteValid(world, fromAreaId, route, entity){
-  if(!Array.isArray(route) || route.length === 0) return { ok:false, reason:"empty_route" };
-
-  const stepsAllowed = maxSteps(entity);
-  if(route.length > stepsAllowed) return { ok:false, reason:"too_many_steps", stepsAllowed };
-
-  let cur = fromAreaId;
-  for(const raw of route){
-    const to = Number(raw);
-    if(!isAreaActive(world, to)) return { ok:false, reason:"area_closed", at: to };
-    if(!isAdjacent(world, cur, to)) return { ok:false, reason:"not_adjacent", from: cur, to };
-
-    const dest = world.map.areasById[String(to)];
-    if(dest?.hasWater && !dest?.hasBridge){
-      return { ok:false, reason:"water_no_bridge", to };
-    }
-    cur = to;
-  }
-  return { ok:true, finalAreaId: cur };
+function canEnter(world, toAreaId){
+  const a = world.map.areasById[String(toAreaId)];
+  if(!a) return { ok:false, reason:"missing_area" };
+  if(a.isActive === false) return { ok:false, reason:"area_closed" };
+  if(a.hasWater && !a.hasBridge) return { ok:false, reason:"water_no_bridge" };
+  return { ok:true };
 }
 
-export function advanceDay(world, actions = []){
+function actorById(world, id){
+  if(id === "player") return world.entities.player;
+  return world.entities.npcs?.[id];
+}
+
+function prng(seed, day, salt){
+  // deterministic 0..1
+  let h = 2166136261 >>> 0;
+  const s = String(seed) + "|" + String(day) + "|" + String(salt);
+  for (let i=0;i<s.length;i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // xorshift-ish
+  h ^= h << 13; h >>>= 0;
+  h ^= h >>> 17; h >>>= 0;
+  h ^= h << 5; h >>>= 0;
+  return (h >>> 0) / 4294967296;
+}
+
+function applyDamage(target, dmg){
+  target.hp = Math.max(0, (target.hp ?? 100) - dmg);
+}
+
+export function commitPlayerAction(world, action){
+  // Applies immediately. Returns { nextWorld, events }.
   const next = cloneWorld(world);
   const day = next.meta.day;
-  const events = [];
-  const stepsTaken = {}; // actorId -> steps used today
+  const seed = next.meta.seed;
 
-  // 0) Apply closures effective today + schedule new ones (warning -> close next day)
+  const events = [];
+  const player = next.entities.player;
+  if((player.hp ?? 0) <= 0){
+    events.push({ type:"NO_ACTION", reason:"player_dead" });
+    return { nextWorld: next, events };
+  }
+
+  const kind = action?.kind || "NOTHING";
+
+  if(kind === "ATTACK"){
+    const targetId = action?.targetId || null;
+    const target = targetId ? actorById(next, targetId) : null;
+
+    if(!target || (target.hp ?? 0) <= 0 || target.areaId !== player.areaId){
+      events.push({ type:"ATTACK", ok:false, reason:"no_valid_target" });
+      return { nextWorld: next, events };
+    }
+
+    const base = 8;
+    const roll = prng(seed, day, "atk");
+    const dmg = base + Math.floor(roll * 5); // 8..12
+
+    applyDamage(target, dmg);
+    events.push({ type:"ATTACK", ok:true, target: targetId, dmgDealt: dmg });
+
+    // retaliation chance
+    const ret = prng(seed, day, "ret");
+    if((target.hp ?? 0) > 0 && ret < 0.55){
+      const rDmg = 6 + Math.floor(prng(seed, day, "ret_dmg") * 5); // 6..10
+      applyDamage(player, rDmg);
+      events.push({ type:"DAMAGE_RECEIVED", from: targetId, dmg: rDmg });
+    }
+
+    if((target.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who: targetId, areaId: target.areaId });
+      player.kills = (player.kills ?? 0) + 1;
+    }
+    if((player.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who: "player", areaId: player.areaId });
+    }
+    return { nextWorld: next, events };
+  }
+
+  if(kind === "DEFEND"){
+    // Defend reduces a deterministic hazard this turn
+    const hazardRoll = prng(seed, day, "haz");
+    if(hazardRoll < 0.35){
+      events.push({ type:"DEFEND", ok:true, note:"nothing_happened" });
+      return { nextWorld: next, events };
+    }
+    const incoming = 6 + Math.floor(prng(seed, day, "haz_dmg") * 6); // 6..11
+    const reduced = Math.ceil(incoming * 0.5);
+    applyDamage(player, reduced);
+    events.push({ type:"DEFEND", ok:true });
+    events.push({ type:"DAMAGE_RECEIVED", from:"hazard", dmg: reduced, reducedFrom: incoming });
+    if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
+    return { nextWorld: next, events };
+  }
+
+  // NOTHING
+  const nothingRoll = prng(seed, day, "nth");
+  if(nothingRoll < 0.55){
+    events.push({ type:"NOTHING", ok:true, note:"quiet_day_moment" });
+    return { nextWorld: next, events };
+  }
+  // small hazard if unlucky
+  const dmg = 4 + Math.floor(prng(seed, day, "nth_dmg") * 5); // 4..8
+  applyDamage(player, dmg);
+  events.push({ type:"NOTHING", ok:true });
+  events.push({ type:"DAMAGE_RECEIVED", from:"hazard", dmg });
+  if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
+  return { nextWorld: next, events };
+}
+
+export function moveActorOneStep(world, who, toAreaId){
+  // Mutates world. Returns { ok, events: [] }
+  const events = [];
+  const entity = actorById(world, who);
+  if(!entity) return { ok:false, events };
+
+  if((entity.hp ?? 0) <= 0) return { ok:false, events };
+
+  const from = entity.areaId;
+  const to = Number(toAreaId);
+
+  if(!isAreaActive(world, from)){
+    events.push({ type:"MOVE_BLOCKED", who, from, to, reason:"start_area_closed" });
+    return { ok:false, events };
+  }
+  if(!isAdjacent(world, from, to)){
+    events.push({ type:"MOVE_BLOCKED", who, from, to, reason:"not_adjacent" });
+    return { ok:false, events };
+  }
+  const enter = canEnter(world, to);
+  if(!enter.ok){
+    events.push({ type:"MOVE_BLOCKED", who, from, to, reason: enter.reason });
+    return { ok:false, events };
+  }
+
+  entity.areaId = to;
+  events.push({ type:"MOVE", who, from, to });
+
+  if(who === "player"){
+    const v = new Set(world.flags.visitedAreas || []);
+    v.add(1); v.add(to);
+    world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
+  }
+  return { ok:true, events };
+}
+
+export function endDay(world, npcIntents = [], dayEvents = []){
+  // Ends the day, applies NPC movement + maintenance, logs events, advances day.
+  const next = cloneWorld(world);
+  const day = next.meta.day;
+  const events = [...(dayEvents || [])];
+
   applyClosuresForDay(next, day);
 
-  // 1) Action 1: declarations
-  const declarations = buildDeclarations(actions);
-  // store defend/attack intent for the day
-  next.systems.combat = { declarations };
-
-  // 2) Action 2: movement/stay
-  for(const act of actions){
+  // NPC movement intents (ignore combat declarations for now)
+  for(const act of (npcIntents || [])){
+    if(!act || !act.source) continue;
     if(act.type === "MOVE"){
-      applyMove(next, act.source, act.payload || {}, events);
-    } else if (act.type === "STAY"){
-      events.push({ type: "STAY", who: act.source });
+      const route = Array.isArray(act.payload?.route) ? act.payload.route : [];
+      const to = (route.length ? route[route.length-1] : act.payload?.toAreaId);
+      if(to != null){
+        const res = moveActorOneStep(next, act.source, to);
+        events.push(...res.events);
+      }
+    } else if(act.type === "STAY"){
+      events.push({ type:"STAY", who: act.source });
     }
   }
 
-  // 3) Encounters + Combat (MVP)
-  resolveCombat(next, declarations, events);
-
-  // 4) Maintenance: FP -10; Cornucopia auto food
-  for(const e of [next.entities.player, ...Object.values(next.entities.npcs)]){
+  // Maintenance: FP -10; Cornucopia restores
+  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
-
     const inCorn = (e.areaId === 1);
     if(inCorn){
       e.fp = 70;
@@ -75,160 +198,17 @@ export function advanceDay(world, actions = []){
     }
   }
 
-  // 5) Next day + log
   next.meta.day += 1;
   next.log.days.push({ day, events });
 
   return next;
 }
 
-function buildDeclarations(actions){
-  const decl = {}; // id -> { attackTargetId?, defend?, doNothing? }
-  for(const act of actions){
-    if(!act || !act.source) continue;
-    if(!decl[act.source]) decl[act.source] = {};
-    if(act.type === "ATTACK"){
-      decl[act.source].attackTargetId = act.payload?.targetId ?? null;
-    } else if(act.type === "DEFEND"){
-      decl[act.source].defend = true;
-    } else if(act.type === "DO_NOTHING"){
-      decl[act.source].doNothing = true;
-    }
-  }
-  return decl;
-}
-
-function actorById(world, id){
-  if(id === "player") return world.entities.player;
-  return world.entities.npcs[id];
-}
-
-function applyMove(world, who, payload, events){
-  const entity = actorById(world, who);
-  if(!entity) return;
-
-  const from = entity.areaId;
-  const route = Array.isArray(payload.route) ? payload.route.map(Number)
-    : (payload.toAreaId != null ? [Number(payload.toAreaId)] : []);
-
-  if(route.length === 0){
-    events.push({ type: "MOVE_BLOCKED", who, from, reason: "empty_route" });
-    return;
-  }
-
-  if(!isAreaActive(world, from)){
-    events.push({ type: "MOVE_BLOCKED", who, from, reason: "start_area_closed" });
-    return;
-  }
-
-  const res = isRouteValid(world, from, route, entity);
-  if(!res.ok){
-    events.push({ type: "MOVE_BLOCKED", who, from, to: route[0], reason: res.reason, details: res });
-    return;
-  }
-
-  const to = res.finalAreaId;
-  entity.areaId = to;
-  stepsTaken[entity.id] = used + 1;
-  events.push({ type: "MOVE", who, from, to, route });
-
-  if(who === "player"){
-    const v = new Set(world.flags.visitedAreas || []);
-    v.add(1);
-    v.add(to);
-    world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
-  }
-}
-
-function resolveCombat(world, decl, events){
-  // Group actors by area
-  const byArea = new Map();
-  for(const a of [world.entities.player, ...Object.values(world.entities.npcs)]){
-    if((a.hp ?? 0) <= 0) continue;
-    const arr = byArea.get(a.areaId) || [];
-    arr.push(a);
-    byArea.set(a.areaId, arr);
-  }
-
-  const baseDmg = 5;
-
-  for(const [areaId, actors] of byArea.entries()){
-    // build attack pairs within area
-    for(const attacker of actors){
-      const ad = decl[attacker.id === world.entities.player.id ? "player" : attacker.id] || decl[attacker.id] || {};
-      const targetId = ad.attackTargetId;
-      if(!targetId) continue;
-
-      const target = actorById(world, targetId) || actors.find(x => x.id === targetId);
-      if(!target) continue;
-      if(target.areaId !== attacker.areaId) continue;
-
-      // Only counter if target also attacked attacker
-      const td = decl[targetId] || {};
-      const targetAttacksBack = (td.attackTargetId === (attacker.id === world.entities.player.id ? "player" : attacker.id));
-
-      // Determine order if mutual attack
-      if(targetAttacksBack){
-        resolveMutualAttack(world, attacker, target, baseDmg, decl, events);
-      } else {
-        applyDamage(world, attacker, target, baseDmg, decl, events);
-      }
-    }
-  }
-}
-
-function strengthOf(e){ return e.attrs?.F ?? 0; }
-
-function resolveMutualAttack(world, a, b, baseDmg, decl, events){
-  // Order by strength; tie => both deal damage
-  const fa = strengthOf(a), fb = strengthOf(b);
-  if(fa === fb){
-    applyDamage(world, a, b, baseDmg, decl, events);
-    applyDamage(world, b, a, baseDmg, decl, events);
-    return;
-  }
-  const first = (fa > fb) ? a : b;
-  const second = (first === a) ? b : a;
-
-  applyDamage(world, first, second, baseDmg, decl, events);
-
-  // "Dead weaker can't strike back" MVP:
-  // if second died and second's strength < first's strength, no return damage.
-  if((second.hp ?? 0) <= 0 && strengthOf(second) < strengthOf(first)){
-    return;
-  }
-  applyDamage(world, second, first, baseDmg, decl, events);
-}
-
-function applyDamage(world, attacker, target, dmg, decl, events){
-  if((attacker.hp ?? 0) <= 0) return;
-  if((target.hp ?? 0) <= 0) return;
-
-  const tDecl = decl[target.id] || {};
-  const defended = !!tDecl.defend;
-  const finalDmg = defended ? Math.ceil(dmg * 0.5) : dmg;
-
-  target.hp = (target.hp ?? 100) - finalDmg;
-  events.push({ type:"HIT", attacker: attacker.id === world.entities.player.id ? "player" : attacker.id, target: target.id === world.entities.player.id ? "player" : target.id, dmg: finalDmg, defended });
-
-  if(target.hp <= 0){
-    target.hp = 0;
-    events.push({ type:"DEATH", who: target.id === world.entities.player.id ? "player" : target.id, areaId: target.areaId });
-
-    // Kill count MVP: only if attacker is alive
-    if(attacker.id === world.entities.player.id){
-      world.entities.player.kills = (world.entities.player.kills ?? 0) + 1;
-    } else {
-      attacker.kills = (attacker.kills ?? 0) + 1;
-    }
-  }
-}
-
 function applyClosuresForDay(world, day){
   // Close anything scheduled for today
-  for(const idStr of Object.keys(world.map.areasById)){
+  for(const idStr of Object.keys(world.map.areasById || {})){
     const a = world.map.areasById[idStr];
-    if(a.isActive !== false && a.willCloseOnDay === day){
+    if(a?.isActive !== false && a?.willCloseOnDay === day){
       a.isActive = false;
       world.flags.closedAreas = Array.from(new Set([...(world.flags.closedAreas||[]), a.id])).sort((x,y)=>x-y);
     }
@@ -236,20 +216,15 @@ function applyClosuresForDay(world, day){
 
   // Starting day 3, every 2 days: mark 4 highest-id active areas (excluding 1) to close next day.
   if(day >= 3 && ((day - 3) % 2 === 0)){
-    const active = Object.values(world.map.areasById)
-      .filter(a => a.id !== 1 && a.isActive !== false);
+    const active = Object.values(world.map.areasById || {})
+      .filter(a => a && a.id !== 1 && a.isActive !== false);
 
     active.sort((a,b)=>b.id-a.id);
     const toMark = active.slice(0, 4);
     for(const a of toMark){
       if(a.willCloseOnDay == null){
-        a.willCloseOnDay = day + 1; // warning today, closes tomorrow
+        a.willCloseOnDay = day + 1;
       }
     }
   }
-}function maxStepsFor(entity){
-  // MVP: up to 3 steps/day. Later: depend on HP/FP.
-  return 3;
 }
-
-
