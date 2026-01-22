@@ -1,74 +1,67 @@
-import { MapSize, createInitialWorld } from "./state.js";
+im
+function startMovePhase(){
+  uiState.phase = "MOVE";
+  uiState.moveRoute = [];
+  const p = world.entities.player;
+  uiState.movesLeft = maxSteps(p);
+
+  moveBannerEl.classList.remove("hidden");
+  moveBannerEl.textContent = `Move phase: you may move up to ${uiState.movesLeft} adjacent areas today. Moves left: ${uiState.movesLeft}.`;
+
+  document.getElementById("commit").classList.add("hidden");
+  endDayBtn.classList.remove("hidden");
+}
+
+function endDay(){
+  // end day without extra movement
+  uiState.phase = "INTENT";
+
+  world = endDayMaintenance(world);
+
+  uiState.movesLeft = 0;
+  uiState.moveRoute = [];
+  uiState.actionMessages = [];
+  if(world.meta) world.meta.lastActionMessages = [];
+
+  saveToLocal(world);
+
+  document.getElementById("commit").classList.remove("hidden");
+  endDayBtn.classList.add("hidden");
+  moveBannerEl.classList.add("hidden");
+  actionLogEl.classList.add("hidden");
+
+  sync();
+}
+port { MapSize, createInitialWorld } from "./state.js";
 import { generateMapData } from "./mapgen.js";
 import { MapUI } from "./mapui.js";
-import { advanceDay, maxSteps } from "./sim.js";
-import { generateNpcIntents } from "./ai.js";
+import { advanceDay, applyAction1Phase, endDayMaintenance } from "./sim.js";
 import { saveToLocal, loadFromLocal, clearLocal, downloadJSON, uploadJSON } from "./storage.js";
 
 const root = document.getElementById("root");
 
 let world = null;
-
-const uiState = {
-  focusedAreaId: 1,
-  plannedRoute: [],
-  pendingAction1: null,
-  pendingTargetId: null,
-};
-
-const DISTRICT_INFO = {
-  1: { name: "Luxury items", emoji: "💎", career: true },
-  2: { name: "Masonry, defense, weaponry", emoji: "🛡️", career: true },
-  3: { name: "Electronics, technology", emoji: "💻", career: false },
-  4: { name: "Fishing", emoji: "🐟", career: true },
-  5: { name: "Power, energy", emoji: "⚡", career: false },
-  6: { name: "Transportation", emoji: "🚆", career: false },
-  7: { name: "Lumber, wood", emoji: "🪵", career: false },
-  8: { name: "Textiles, clothing", emoji: "🧵", career: false },
-  9: { name: "Grain, agriculture", emoji: "🌾", career: false },
-  10:{ name: "Livestock, meat", emoji: "🐄", career: false },
-  11:{ name: "Agriculture, food production", emoji: "🥕", career: false },
-  12:{ name: "Coal mining", emoji: "⛏️", career: false },
-};
-
-function districtTag(d){
-  const info = DISTRICT_INFO[d] || { emoji:"🏷️", name:"" };
-  return `${info.emoji} Dist. ${d}`;
-}
+let paletteIndex = 0;
 
 function renderStart(){
   root.innerHTML = `
     <div class="screen">
       <div class="card">
-        <div class="h1">Arena Simulator</div>
-        <div class="muted">Start in the Cornucopia (Area 1). Plan your move on the map, then commit actions.</div>
+        <div class="h1">Arena</div>
+        <div class="muted">Escolha o tamanho do mapa e entre na arena. O motor roda por dias e é determinístico por seed.</div>
         <hr class="sep" />
-
         <div class="row">
-          <label class="muted">Map size</label>
+          <label class="muted">Tamanho</label>
           <select id="size" class="select">
-            <option value="${MapSize.SMALL}">Small (24)</option>
-            <option value="${MapSize.MEDIUM}" selected>Medium (48)</option>
-            <option value="${MapSize.LARGE}">Large (72)</option>
+            <option value="${MapSize.SMALL}">Pequena (24 áreas)</option>
+            <option value="${MapSize.MEDIUM}" selected>Média (48 áreas)</option>
+            <option value="${MapSize.LARGE}">Grande (72 áreas)</option>
           </select>
-
-          <label class="muted">Players</label>
-          <select id="players" class="select">
-            <option value="12" selected>12</option>
-            <option value="24">24</option>
-            <option value="48">48</option>
-          </select>
-
-          <label class="muted">Your district</label>
-          <select id="district" class="select">
-            ${Array.from({length:12}, (_,i)=>`<option value="${i+1}">District ${i+1}</option>`).join("")}
-          </select>
+          <button id="enter" class="btn">Entrar na arena</button>
+          <button id="resume" class="btn">Continuar save</button>
         </div>
-
-        <div class="row" style="margin-top:10px;">
-          <button id="enter" class="btn primary" style="flex:1;">Enter arena</button>
-          <button id="resume" class="btn">Resume</button>
-          <button id="wipe" class="btn">Clear save</button>
+        <div class="muted small" style="margin-top:10px;">
+          Dica: rode em servidor local (ex: <code>python -m http.server</code>).
         </div>
       </div>
     </div>
@@ -76,39 +69,31 @@ function renderStart(){
 
   document.getElementById("enter").onclick = () => {
     const mapSize = Number(document.getElementById("size").value);
-    const totalPlayers = Number(document.getElementById("players").value);
-    const playerDistrict = Number(document.getElementById("district").value);
-    startNewGame(mapSize, totalPlayers, playerDistrict);
+    startNewGame(mapSize);
   };
 
   document.getElementById("resume").onclick = () => {
     const saved = loadFromLocal();
-    if(!saved){ alert("No save found."); return; }
+    if(!saved){
+      alert("Nenhum save encontrado.");
+      return;
+    }
     world = saved;
-    uiState.focusedAreaId = world.entities.player.areaId;
-    uiState.plannedRoute = [];
     renderGame();
-  };
-
-  document.getElementById("wipe").onclick = () => {
-    clearLocal();
-    alert("Save cleared.");
   };
 }
 
-function startNewGame(mapSize, totalPlayers, playerDistrict){
+function startNewGame(mapSize){
   const seed = (Math.random() * 1e9) | 0;
   const mapData = generateMapData({
     seed,
     regions: mapSize,
     width: 820,
     height: 820,
-    paletteIndex: 0
+    paletteIndex
   });
 
-  world = createInitialWorld({ seed, mapSize, mapData, totalPlayers, playerDistrict });
-  uiState.focusedAreaId = 1;
-  uiState.plannedRoute = [];
+  world = createInitialWorld({ seed, mapSize, mapData, npcCount: 6 });
   saveToLocal(world);
   renderGame();
 }
@@ -117,393 +102,185 @@ function renderGame(){
   root.innerHTML = `
     <div class="app">
       <aside class="panel">
-        <div class="h1" style="margin:0;">Arena</div>
-        <div class="muted small">Day <span id="day"></span> • Seed <span id="seed"></span></div>
-
-        <div class="section">
-          <button id="commit" class="btn primary" style="width:100%; padding:12px 14px;">Commit Actions</button>
-          <div class="muted small" style="margin-top:6px;">Plan movement on the map, then commit 2 actions.</div>
-        </div>
-
-        <div class="section">
-          <div class="muted">Focused area</div>
-          <div class="row" style="margin-top:6px;">
-            <span class="pill"><span class="swatch" id="swatch"></span><span id="title">—</span></span>
-            <span class="pill" id="visitedCount">Visited: —</span>
-          </div>
-
-          <div class="muted" style="margin-top:10px;">Occupants</div>
-          <div id="occupants" class="list"></div>
-
-          <div class="kv">
-            <div>Area</div><div id="infoNum">—</div>
-            <div>Biome</div><div id="infoBiome">—</div>
-            <div>Water</div><div id="infoWater">—</div>
-            <div>Visited</div><div id="infoVisited">—</div>
-            <div>Plan</div><div id="infoPlan">—</div>
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <div class="h1" style="margin:0;">Area Inspector</div>
+            <div class="muted small">Dia: <span id="day"></span> • Seed: <span id="seed"></span></div>
           </div>
         </div>
 
-        
-<div class="section">
-  <div class="muted">Debug (temporary)</div>
-  <div class="row" style="margin-top:8px;">
-    <button id="debugAdvance" class="btn">Advance day</button>
-  </div>
-  <div class="muted small" style="margin-top:8px;">All tributes (HP/FP/Area)</div>
-  <div id="debugTributes" class="list" style="max-height:220px; overflow:auto;"></div>
-</div>
-
-<div class="section">
-          <div class="muted">Tools</div>
-          <div class="row" style="margin-top:8px;">
-            <button id="regen" class="btn">New map</button>
-            <button id="restart" class="btn">Restart</button>
-          </div>
-          <div class="row" style="margin-top:8px;">
-            <button id="saveLocal" class="btn">Save</button>
-            <button id="export" class="btn">Export JSON</button>
-            <label class="btn" style="display:inline-flex; align-items:center; gap:8px;">
-              Import <input id="import" type="file" accept="application/json" style="display:none" />
-            </label>
-            <button id="clearLocal" class="btn">Clear save</button>
-          </div>
+        <div class="row">
+          <button id="nextDay" class="btn">Passar o dia</button>
+          <button id="regen" class="btn">Novo mapa</button>
+          <button id="resetProgress" class="btn">Reiniciar progresso</button>
         </div>
+
+        <div class="row">
+          <button id="saveLocal" class="btn">Salvar</button>
+          <button id="export" class="btn">Export JSON</button>
+          <label class="btn" style="display:inline-flex; align-items:center; gap:8px;">
+            Import JSON <input id="import" type="file" accept="application/json" style="display:none" />
+          </label>
+          <button id="clearLocal" class="btn">Apagar save</button>
+        </div>
+
+        <div class="row">
+          <span class="pill"><span class="swatch" id="swatch"></span><span id="title">—</span></span>
+          <span class="pill" id="visitedCount">Visitadas: —</span>
+        </div>
+
+        <div class="kv">
+          <div>Número</div><div id="infoNum">—</div>
+          <div>Bioma</div><div id="infoBiome">—</div>
+          <div>Cor</div><div id="infoColor">—</div>
+          <div>Água</div><div id="infoWater">—</div>
+          <div>Visitada</div><div id="infoVisited">—</div>
+          <div>Visitável</div><div id="infoVisit">—</div>
+        </div>
+
+        <div class="muted">Notas</div>
+        <textarea id="notes" placeholder="Depois você pode anexar infos por área."></textarea>
+
+        <div class="muted small">Atalho: [1] muda paleta (placeholder)</div>
       </aside>
 
       <main class="canvasWrap">
         <canvas id="c" width="820" height="820"></canvas>
-        <div class="hint">Cornucopia is Area 1 • Red border = closes next day</div>
+        <div class="hint">Mapa = UI • Simulação por dias • Água = lago/pântano/rios</div>
       </main>
-
-      <aside class="panel">
-        <div class="h1" style="margin:0;">You</div>
-        <div class="muted small"><span id="youDistrict">—</span></div>
-
-        <div class="row" style="margin-top:10px;">
-          <span class="pill">HP <span id="youHP" style="font-family:var(--mono);">—</span></span>
-          <span class="pill">FP <span id="youFP" style="font-family:var(--mono);">—</span></span>
-          <span class="pill">Kills <span id="youKills" style="font-family:var(--mono);">—</span></span>
-        </div>
-
-        <div class="kv" style="margin-top:10px;">
-          <div>Visited areas</div><div id="youVisited">—</div>
-          <div>Max steps</div><div id="youSteps">—</div>
-          <div>Inventory</div><div class="muted">Soon</div>
-        </div>
-      </aside>
     </div>
   `;
 
   const dayEl = document.getElementById("day");
   const seedEl = document.getElementById("seed");
-
   const swatch = document.getElementById("swatch");
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
-  const occupantsEl = document.getElementById("occupants");
-  const debugTributes = document.getElementById("debugTributes");
-  const commitBtn = document.getElementById("commit");
-
   const infoNum = document.getElementById("infoNum");
   const infoBiome = document.getElementById("infoBiome");
+  const infoColor = document.getElementById("infoColor");
   const infoWater = document.getElementById("infoWater");
   const infoVisited = document.getElementById("infoVisited");
-  const infoPlan = document.getElementById("infoPlan");
-
-  const youDistrict = document.getElementById("youDistrict");
-  const youHP = document.getElementById("youHP");
-  const youFP = document.getElementById("youFP");
-  const youKills = document.getElementById("youKills");
-  const youVisited = document.getElementById("youVisited");
-  const youSteps = document.getElementById("youSteps");
+  const infoVisit = document.getElementById("infoVisit");
 
   const canvas = document.getElementById("c");
   const mapUI = new MapUI({
     canvas,
     onAreaClick: (id) => {
-      uiState.focusedAreaId = id;
-      planMoveTo(id);
-      sync();
+      // clicar sempre mostra info; só move se for visitável
+      const cur = world.entities.player.areaId;
+      const adj = world.map.adjById[String(cur)] || [];
+      const canMove = (id === cur) || adj.includes(id);
+
+      setFocus(id);
+
+      if (canMove){
+        // registrar ação do jogador no dia atual (sem avançar o dia ainda)
+        ensureReplaySlot(world);
+        world.replay.playerActionsByDay[world.meta.day - 1].push({ type: "MOVE", payload: { toAreaId: id } });
+
+        // aplicar movimento imediatamente como UX (a regra real está no motor também)
+        // (isso mantém “mapa como UI” ainda ok porque é só uma projeção; o motor vai confirmar no advanceDay)
+        world.entities.player.areaId = id;
+        const v = new Set(world.flags.visitedAreas);
+        v.add(id); v.add(1);
+        world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
+
+        saveToLocal(world);
+        sync();
+      }
     }
   });
 
-  function planMoveTo(id){
-  if(!world) return;
-  const p = world.entities.player;
-
-  // You must commit Action 1 first to start moving.
-  if(!uiState.pendingAction1){
-    uiState.plannedRoute = [];
-    return;
-  }
-
-  const stepsAllowed = maxSteps(p);
-
-  const area = world.map.areasById[String(id)];
-  if(!area || area.isActive === false) return;
-
-  const currentPos = (uiState.plannedRoute.length ? uiState.plannedRoute[uiState.plannedRoute.length-1] : p.areaId);
-
-  // Clicking your current node ends movement early (advance day)
-  if(id === currentPos){
-    finalizeDay();
-    return;
-  }
-
-  // Can't exceed max steps
-  if(uiState.plannedRoute.length >= stepsAllowed) return;
-
-  // Must be adjacent
-  const adj = world.map.adjById[String(currentPos)] || [];
-  if(!adj.includes(id)) return;
-
-  // Water rule: cannot enter water without bridge
-  if(area.hasWater && !area.hasBridge) return;
-
-  uiState.plannedRoute.push(id);
-
-  if(uiState.plannedRoute.length >= stepsAllowed){
-    finalizeDay();
-  }
-}
-
-function finalizeDay(){
-  if(!world) return;
-
-  const actions = [];
-
-  // Action 1 (mandatory)
-  const a1 = uiState.pendingAction1?.type || "DO_NOTHING";
-  if(a1 === "ATTACK"){
-    const targetId = uiState.pendingTargetId || null;
-    if(targetId){
-      actions.push({ source: "player", type: "ATTACK", payload: { targetId } });
-    } else {
-      actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
+  function ensureReplaySlot(w){
+    while(w.replay.playerActionsByDay.length < w.meta.day){
+      w.replay.playerActionsByDay.push([]);
     }
-  } else if (a1 === "DEFEND"){
-    actions.push({ source: "player", type: "DEFEND", payload: {} });
-  } else {
-    actions.push({ source: "player", type: "DO_NOTHING", payload: {} });
   }
 
-  // Action 2 (move or stay)
-  if(uiState.plannedRoute.length){
-    actions.push({ source: "player", type: "MOVE", payload: { route: uiState.plannedRoute.slice() } });
-  } else {
-    actions.push({ source: "player", type: "STAY", payload: {} });
+  let focusedId = world.entities.player.areaId;
+
+  function setFocus(id){
+    focusedId = id;
+    const info = mapUI.getAreaInfo(id);
+    if(!info) return;
+
+    title.textContent = (info.id === 1) ? `Área ${info.id} (🍞)` : `Área ${info.id}`;
+    swatch.style.background = info.color;
+    infoNum.textContent = String(info.id);
+    infoBiome.textContent = info.biome;
+    infoColor.textContent = info.color;
+    infoWater.textContent = info.hasWater ? "Sim" : "Não";
+    infoVisited.textContent = info.visited ? "Sim" : "Não";
+    infoVisit.textContent = info.visitable ? "Sim (adjacente)" : "Não";
   }
-
-  const intents = generateNpcIntents(world);
-  world = advanceDay(world, [...actions, ...intents]);
-
-  uiState.pendingAction1 = null;
-  uiState.pendingTargetId = null;
-  uiState.plannedRoute = [];
-  uiState.focusedAreaId = world.entities.player.areaId;
-
-  saveToLocal(world);
-  sync();
-}
 
   function sync(){
-    if(!world) return;
-
     dayEl.textContent = String(world.meta.day);
     seedEl.textContent = String(world.meta.seed);
-
-    const p = world.entities.player;
-
-    const dInfo = DISTRICT_INFO[p.district] || {};
-    youDistrict.textContent = `${districtTag(p.district)} • ${dInfo.name || ""}`;
-    youHP.textContent = String(p.hp ?? 100);
-    youFP.textContent = String(p.fp ?? 70);
-    youKills.textContent = String(p.kills ?? 0);
-    youVisited.textContent = String(world.flags.visitedAreas.length);
-    youSteps.textContent = String(maxSteps(p));
-
-    visitedCount.textContent = `Visited: ${world.flags.visitedAreas.length}`;
-
-    const focus = uiState.focusedAreaId;
-    const a = world.map.areasById[String(focus)];
-    const visited = world.flags.visitedAreas.includes(focus);
-
-    title.textContent = (focus === 1) ? `Area 1 (🏺 Cornucopia)` : `Area ${focus}`;
-    swatch.style.background = (visited ? (a?.color || "#2a2f3a") : "#2a2f3a");
-
-    infoNum.textContent = String(focus);
-    infoBiome.textContent = visited ? (a?.biome || "—") : "Unknown";
-    infoWater.textContent = visited ? ((a?.hasWater) ? "Yes" : "No") : "Unknown";
-    infoVisited.textContent = visited ? "Yes" : "No";
-    infoPlan.textContent = uiState.plannedRoute.length ? uiState.plannedRoute.join(" → ") : "—";
-
-    if(commitBtn){
-      if(uiState.pendingAction1){
-        const label = uiState.pendingAction1.type === "ATTACK" ? "Attack" : uiState.pendingAction1.type === "DEFEND" ? "Defend" : "Do nothing";
-        commitBtn.textContent = `Action 1: ${label} • Move on map`;
-      } else {
-        commitBtn.textContent = "Commit Action 1";
-      }
-    }
-
-    // Occupants: reveal if visited OR your current area
-    const reveal = visited || (focus === p.areaId);
-    const occ = [];
-    if(reveal){
-      if(p.areaId === focus) occ.push({ name: "You", district: p.district, id: "player" });
-      for(const npc of Object.values(world.entities.npcs)){
-        if(npc.areaId === focus) occ.push({ name: npc.name, district: npc.district, id: npc.id });
-      }
-    }
-
-    occupantsEl.innerHTML = occ.length
-      ? occ.map(o => `<div class="pill"><strong>${escapeHtml(o.name)}</strong><span>${escapeHtml(districtTag(o.district))}</span></div>`).join("")
-      : `<div class="muted small">${reveal ? "No one here" : "Unknown"}</div>`;
-
-    // Debug: list all tributes with HP/FP/Area
-    const all = [];
-    all.push({ id: "player", name: "You", district: p.district, hp: p.hp, fp: p.fp, areaId: p.areaId });
-    for(const npc of Object.values(world.entities.npcs)){
-      all.push({ id: npc.id, name: npc.name, district: npc.district, hp: npc.hp, fp: npc.fp, areaId: npc.areaId });
-    }
-    debugTributes.innerHTML = all.map(t => `
-      <div class="pill" style="justify-content:space-between; gap:10px;">
-        <span><strong>${escapeHtml(t.name)}</strong> <span class="muted small">${escapeHtml(districtTag(t.district))}</span></span>
-        <span class="muted small" style="font-family:var(--mono);">HP ${t.hp} • FP ${t.fp} • A${t.areaId}</span>
-      </div>
-    `).join("");
-
-    mapUI.setData({ world, paletteIndex: 0 });
-    mapUI.render();
+    visitedCount.textContent = `Visitadas: ${world.flags.visitedAreas.length}`;
+    mapUI.setData({ world, paletteIndex });
+    setFocus(focusedId);
   }
 
+  // Buttons
+  document.getElementById("nextDay").onclick = () => {
+    // motor aplica as ações do dia (e NPC intents)
+    const actions = world.replay.playerActionsByDay[world.meta.day - 1] || [];
+    const { nextWorld } = advanceDay(world, actions);
 
-
-  document.getElementById("commit").onclick = () => openCommitModal();
-  document.getElementById("debugAdvance").onclick = () => {
-    // allow advancing even without committing (defaults do nothing + stay)
-    if(!uiState.pendingAction1){
-      uiState.pendingAction1 = { type: "DO_NOTHING" };
-      uiState.pendingTargetId = null;
-    }
-    finalizeDay();
+    world = nextWorld;
+    saveToLocal(world);
+    sync();
   };
 
   document.getElementById("regen").onclick = () => {
-    startNewGame(world.meta.mapSize, world.meta.totalPlayers || 12, world.entities.player.district || 12);
+    // novo mapa (mantém meta/day? aqui vou resetar jogo)
+    startNewGame(world.meta.mapSize);
   };
-  document.getElementById("restart").onclick = () => {
-    clearLocal();
-    world = null;
-    renderStart();
+
+  document.getElementById("resetProgress").onclick = () => {
+    world.flags.visitedAreas = [1];
+    world.entities.player.areaId = 1;
+    focusedId = 1;
+    saveToLocal(world);
+    sync();
   };
-  document.getElementById("saveLocal").onclick = () => { saveToLocal(world); alert("Saved."); };
+
+  document.getElementById("saveLocal").onclick = () => {
+    saveToLocal(world);
+    alert("Salvo no navegador.");
+  };
+
   document.getElementById("export").onclick = () => downloadJSON(world);
 
   document.getElementById("import").onchange = async (e) => {
     const file = e.target.files?.[0];
     if(!file) return;
-    const next = await uploadJSON(file);
-    world = next;
-    uiState.focusedAreaId = world.entities.player.areaId;
-    uiState.plannedRoute = [];
-    saveToLocal(world);
-    sync();
+    try{
+      const loaded = await uploadJSON(file);
+      world = loaded;
+      saveToLocal(world);
+      renderGame(); // re-render inteira
+    } catch(err){
+      alert(err.message || "Falha ao importar.");
+    }
   };
 
   document.getElementById("clearLocal").onclick = () => {
     clearLocal();
-    alert("Save cleared. Refresh and start a new game.");
+    alert("Save apagado.");
   };
 
-  mapUI.setData({ world, paletteIndex: 0 });
-  sync();
-
-  function openCommitModal(){
-    const p = world.entities.player;
-
-    const sameAreaNpcs = Object.values(world.entities.npcs).filter(n => n.areaId === p.areaId && (n.hp ?? 0) > 0);
-    const canAttack = sameAreaNpcs.length > 0;
-
-    const overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.innerHTML = `
-      <div class="modal">
-        <div class="h1" style="margin:0;">Commit actions (Day ${world.meta.day})</div>
-        <div class="muted small" style="margin-top:6px;">Choose Action 1 now. Then move on the map (up to your max steps). The day advances automatically.</div>
-
-        <div class="section">
-          <h3>Action 1</h3>
-          <div class="row">
-            <button id="a1Attack" class="btn" ${canAttack ? "" : "disabled"}>Attack</button>
-            <button id="a1Defend" class="btn">Defend</button>
-            <button id="a1Nothing" class="btn">Do nothing</button>
-          </div>
-
-          <div class="row" style="margin-top:8px; align-items:center;">
-            <label class="muted small">Target</label>
-            <select id="target" class="select" ${canAttack ? "" : "disabled"}>
-              ${sameAreaNpcs.map(n => `<option value="${n.id}">${escapeHtml(n.name)} (${districtTag(n.district)})</option>`).join("")}
-            </select>
-          </div>
-
-          <div class="muted small" style="margin-top:6px;">
-            ${canAttack ? "Attack available: choose a target in your area." : "No valid targets here."}
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:14px; justify-content:flex-end;">
-          <button id="close" class="btn">Close</button>
-          <button id="confirm" class="btn primary">Confirm Action 1</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    let action1 = "DO_NOTHING";
-
-    const setBtnState = () => {
-      overlay.querySelectorAll("button").forEach(b => b.style.outline = "");
-      const b1 = overlay.querySelector(action1==="ATTACK" ? "#a1Attack" : action1==="DEFEND" ? "#a1Defend" : "#a1Nothing");
-      if (b1) b1.style.outline = "2px solid var(--accent)";
-    };
-
-    overlay.querySelector("#close").onclick = () => overlay.remove();
-
-    overlay.querySelector("#a1Attack").onclick = () => { if(canAttack){ action1="ATTACK"; setBtnState(); } };
-    overlay.querySelector("#a1Defend").onclick = () => { action1="DEFEND"; setBtnState(); };
-    overlay.querySelector("#a1Nothing").onclick = () => { action1="DO_NOTHING"; setBtnState(); };
-
-    setBtnState();
-
-    overlay.querySelector("#confirm").onclick = () => {
-      // store Action 1, close modal, then player moves on the map
-      if(action1 === "ATTACK"){
-        uiState.pendingAction1 = { type: "ATTACK" };
-        uiState.pendingTargetId = overlay.querySelector("#target")?.value || null;
-      } else if (action1 === "DEFEND"){
-        uiState.pendingAction1 = { type: "DEFEND" };
-        uiState.pendingTargetId = null;
-      } else {
-        uiState.pendingAction1 = { type: "DO_NOTHING" };
-        uiState.pendingTargetId = null;
-      }
-
-      uiState.plannedRoute = [];
-      overlay.remove();
+  // Palette shortcut placeholder
+  window.onkeydown = (e) => {
+    if (e.key === "1"){
+      paletteIndex = 0;
       sync();
-    };
-  }
-}
+    }
+  };
 
-function escapeHtml(s){
-  return String(s)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+  sync();
 }
 
 renderStart();
