@@ -212,7 +212,6 @@ function renderGame(){
   const endBtn = document.getElementById("endDay");
   const movesLeftEl = document.getElementById("movesLeft");
   const entityLocsEl = document.getElementById("entityLocs");
-  const movesLeftEl = document.getElementById("movesLeft");
   const entityLocsEl = document.getElementById("entityLocs");
   const occupantsEl = document.getElementById("occupants");
   const debugTributes = document.getElementById("debugTributes");
@@ -696,5 +695,4 @@ renderStart();
     } catch(err){ alert(err.message || "Falha ao importar."); }
   };
   document.getElementById("clearLocal").onclick = () => { clearLocal(); alert("Save apagado."); };
-
 
