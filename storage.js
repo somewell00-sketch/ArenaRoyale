@@ -1,4 +1,4 @@
-const KEY = "arena_save_v2";
+const KEY = "arena_save_v1";
 
 export function saveToLocal(world){
   localStorage.setItem(KEY, JSON.stringify(world));
@@ -27,10 +27,10 @@ export function downloadJSON(world){
 export function uploadJSON(file){
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
-    fr.onerror = () => reject(new Error("Failed to read file"));
+    fr.onerror = () => reject(new Error("Falha ao ler arquivo"));
     fr.onload = () => {
       try { resolve(JSON.parse(fr.result)); }
-      catch { reject(new Error("Invalid JSON")); }
+      catch { reject(new Error("JSON inválido")); }
     };
     fr.readAsText(file);
   });
