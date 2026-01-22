@@ -102,18 +102,44 @@ export class MapUI {
     canvas.addEventListener("click", (e) => this.handleClick(e));
   }
 
-  setData({ world, paletteIndex=0 }){
+  setData({ world, paletteIndex=0, uiState=null }){
     this.world = world;
+    this.uiState = uiState || {};
     this.paletteIndex = paletteIndex;
     this.geom = world.map.uiGeom;
     this.render();
   }
 
   isVisitable(areaId){
-    const cur = this.world.entities.player.areaId;
-    if (areaId === cur) return true;
-    const adj = this.world.map.adjById[String(cur)] || [];
-    return adj.includes(areaId);
+    const world = this.world;
+    const player = world.entities.player;
+    const start = player.areaId;
+
+    // cannot move through or into inactive areas
+    const isActive = (id) => world.map.areasById[String(id)]?.isActive !== false;
+
+    if (!isActive(areaId)) return false;
+
+    const maxSteps = (player.hp > 30 && player.stamina > 20) ? 3 : 1;
+
+    if (areaId === start) return true;
+
+    // BFS up to maxSteps
+    const q = [[start, 0]];
+    const seen = new Set([start]);
+    while(q.length){
+      const [cur, d] = q.shift();
+      if (d >= maxSteps) continue;
+      const adj = world.map.adjById[String(cur)] || [];
+      for (const n of adj){
+        if (seen.has(n)) continue;
+        if (!isActive(n)) continue;
+        if (n === areaId) return true;
+        seen.add(n);
+        q.push([n, d+1]);
+      }
+    }
+    return false;
   }
 
   canvasToLocal(evt){
@@ -273,6 +299,7 @@ export class MapUI {
       biome: BIOME_EN[area.biome] || area.biome,
       color: area.color,
       hasWater: !!area.hasWater,
+      isActive: area.isActive !== false,
       visited,
       visitable,
       current: (id === cur)

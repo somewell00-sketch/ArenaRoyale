@@ -252,6 +252,7 @@ function renumberCellsByBFS(cells, adj){
 }
 
 // --- Paletas + nomes PT (UI usa) ---
+// --- Biome display names (UI) ---
 export const BIOME_EN = {
   cornucopia: "Cornucopia",
   glacier: "Glacier",
@@ -271,10 +272,10 @@ export const BIOME_EN = {
 };
 
 export const PALETTES = [
+
   {
     ocean: "#070813",
     biomes: {
-      cornucopia: ["#d6b43b","#caa12d","#b9901a"],
       glacier: ["#f7fbff","#eef6ff","#e4f1ff"],
       tundra:  ["#e9efe8","#dbe5d8","#cfdccc"],
       mountain:["#a7b3be","#8f9eac","#7a8895"],
@@ -392,8 +393,7 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
   for(const cell of cells){
     if (cell.id === 1){
       cell.biome = "cornucopia";
-      // Cornucopia is a special biome (unique to Area 1)
-
+      // Cornucopia is a special biome, not part of quotas
       continue;
     }
     const scores = biomeScores(cell.features);
@@ -461,7 +461,7 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     } else {
       cell.fillColor = colorForBiome(cell.biome, rng, paletteIndex);
     }
-    cell.hasWater = (cell.biome === "lake" || cell.biome === "swamp");
+    cell.hasWater = (cell.id === 1) ? false : (cell.biome === "lake" || cell.biome === "swamp");
   }
 
   // river (marks hasWater on crossed cells)
@@ -486,7 +486,9 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
       id: c.id,
       biome: c.biome,
       color: c.fillColor,
-      hasWater: !!c.hasWater
+      hasWater: !!c.hasWater,
+      isActive: true,
+      hasFood: ["plains","woods","forest","jungle","savanna","caatinga"].includes(c.biome)
     };
     adjById[String(c.id)] = Array.from(adj.get(c.id) || []).sort((a,b)=>a-b);
   }
