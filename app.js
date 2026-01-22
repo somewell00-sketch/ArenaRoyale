@@ -207,6 +207,8 @@ function renderGame(){
   const swatch = document.getElementById("swatch");
   const title = document.getElementById("title");
   const visitedCount = document.getElementById("visitedCount");
+  const movesLeftEl = document.getElementById("movesLeft");
+  const entityLocsEl = document.getElementById("entityLocs");
   const occupantsEl = document.getElementById("occupants");
   const debugTributes = document.getElementById("debugTributes");
   const commitBtn = document.getElementById("commit");
@@ -227,6 +229,10 @@ function renderGame(){
   const canvas = document.getElementById("c");
   const mapUI = new MapUI({
     canvas,
+    getCurrentAreaId: () => {
+      const r = world.turnDraft?.route || [];
+      return r.length ? r[r.length-1] : world.entities.player.areaId;
+    },
     onAreaClick: (id) => {
       uiState.focusedAreaId = id;
       planMoveTo(id);

@@ -41,6 +41,7 @@ export function advanceDay(world, actions = []){
   const next = cloneWorld(world);
   const day = next.meta.day;
   const events = [];
+  const stepsTaken = {}; // actorId -> steps used today
 
   // 0) Apply closures effective today + schedule new ones (warning -> close next day)
   applyClosuresForDay(next, day);
@@ -128,6 +129,7 @@ function applyMove(world, who, payload, events){
 
   const to = res.finalAreaId;
   entity.areaId = to;
+  stepsTaken[entity.id] = used + 1;
   events.push({ type: "MOVE", who, from, to, route });
 
   if(who === "player"){
@@ -245,4 +247,9 @@ function applyClosuresForDay(world, day){
       }
     }
   }
+}function maxStepsFor(entity){
+  // MVP: up to 3 steps/day. Later: depend on HP/FP.
+  return 3;
 }
+
+
