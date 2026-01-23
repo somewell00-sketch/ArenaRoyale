@@ -583,8 +583,8 @@ function renderGame(){
         out.push(`Você se moveu da área ${e.from} para a área ${e.to}.`);
       } else if(e.type === "DAMAGE_RECEIVED"){
         if(e.from === "hazard"){
-          if(e.reducedFrom != null) out.push(`Você recebeu ${e.dmg} de dano (reduzido de ${e.reducedFrom}).`);
-          else out.push(`Você recebeu ${e.dmg} de dano.`);
+          if(e.reducedFrom != null) out.push(`Você recebeu ${e.dmg} de dano do ambiente (reduzido de ${e.reducedFrom}).`);
+          else out.push(`Você recebeu ${e.dmg} de dano do ambiente.`);
         } else {
           out.push(`Você recebeu ${e.dmg} de dano de ${npcName(e.from)}.`);
         }

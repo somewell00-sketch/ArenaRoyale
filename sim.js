@@ -63,6 +63,15 @@ export function commitPlayerAction(world, action){
 
   const kind = action?.kind || "NOTHING";
 
+  const npcsHere = Object.values(next.entities.npcs || {})
+    .filter(n => (n.hp ?? 0) > 0 && n.areaId === player.areaId);
+
+  function pickRandomNpc(tag){
+    if(!npcsHere.length) return null;
+    const r = prng(seed, day, tag);
+    return npcsHere[Math.floor(r * npcsHere.length)];
+  }
+
   if(kind === "ATTACK"){
     const targetId = action?.targetId || null;
     const target = targetId ? actorById(next, targetId) : null;
@@ -79,9 +88,9 @@ export function commitPlayerAction(world, action){
     applyDamage(target, dmg);
     events.push({ type:"ATTACK", ok:true, target: targetId, dmgDealt: dmg });
 
-    // retaliation chance
+    // retaliation chance (only makes sense if target is still alive and present)
     const ret = prng(seed, day, "ret");
-    if((target.hp ?? 0) > 0 && ret < 0.55){
+    if((target.hp ?? 0) > 0 && target.areaId === player.areaId && ret < 0.55){
       const rDmg = 6 + Math.floor(prng(seed, day, "ret_dmg") * 5); // 6..10
       applyDamage(player, rDmg);
       events.push({ type:"DAMAGE_RECEIVED", from: targetId, dmg: rDmg });
@@ -98,33 +107,55 @@ export function commitPlayerAction(world, action){
   }
 
   if(kind === "DEFEND"){
-    // Defend reduces a deterministic hazard this turn
-    const hazardRoll = prng(seed, day, "haz");
-    if(hazardRoll < 0.35){
-      events.push({ type:"DEFEND", ok:true, note:"nothing_happened" });
+    // Defend only matters if something attacks you.
+    // If no one is around, nothing happens.
+    if(!npcsHere.length){
+      events.push({ type:"DEFEND", ok:true, note:"no_threats" });
       return { nextWorld: next, events };
     }
-    const incoming = 6 + Math.floor(prng(seed, day, "haz_dmg") * 6); // 6..11
+
+    // 50% chance of being attacked while defending
+    const attacked = prng(seed, day, "def_atk") < 0.5;
+    if(!attacked){
+      events.push({ type:"DEFEND", ok:true, note:"no_attack" });
+      return { nextWorld: next, events };
+    }
+
+    const attacker = pickRandomNpc("def_attacker");
+    const incoming = 8 + Math.floor(prng(seed, day, "def_dmg") * 6); // 8..13
     const reduced = Math.ceil(incoming * 0.5);
+
     applyDamage(player, reduced);
     events.push({ type:"DEFEND", ok:true });
-    events.push({ type:"DAMAGE_RECEIVED", from:"hazard", dmg: reduced, reducedFrom: incoming });
+    events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg: reduced, reducedFrom: incoming });
+
     if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
     return { nextWorld: next, events };
   }
 
   // NOTHING
-  const nothingRoll = prng(seed, day, "nth");
-  if(nothingRoll < 0.55){
-    events.push({ type:"NOTHING", ok:true, note:"quiet_day_moment" });
+  // If there are NPCs here, there is a chance you get hit (you were careless).
+  if(npcsHere.length && prng(seed, day, "nth_atk") < 0.35){
+    const attacker = pickRandomNpc("nth_attacker");
+    const dmg = 5 + Math.floor(prng(seed, day, "nth_dmg") * 6); // 5..10
+    applyDamage(player, dmg);
+    events.push({ type:"NOTHING", ok:true, note:"caught_off_guard" });
+    events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg });
+    if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
     return { nextWorld: next, events };
   }
-  // small hazard if unlucky
-  const dmg = 4 + Math.floor(prng(seed, day, "nth_dmg") * 5); // 4..8
-  applyDamage(player, dmg);
-  events.push({ type:"NOTHING", ok:true });
-  events.push({ type:"DAMAGE_RECEIVED", from:"hazard", dmg });
-  if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
+
+  // Small chance of environmental hazard even if alone.
+  if(prng(seed, day, "nth_haz") < 0.15){
+    const dmg = 3 + Math.floor(prng(seed, day, "nth_haz_dmg") * 5); // 3..7
+    applyDamage(player, dmg);
+    events.push({ type:"NOTHING", ok:true });
+    events.push({ type:"DAMAGE_RECEIVED", from:"hazard", dmg });
+    if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
+    return { nextWorld: next, events };
+  }
+
+  events.push({ type:"NOTHING", ok:true, note:"quiet_day_moment" });
   return { nextWorld: next, events };
 }
 
