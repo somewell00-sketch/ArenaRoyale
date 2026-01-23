@@ -370,6 +370,54 @@ textarea{
 .pillName{ font-weight:700; }
 .pillSub{ color: rgba(240,240,242,0.70); font-size: 12px; }
 
+/* Inventory pills */
+.itemPill{
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(17,17,19,0.55);
+  border: 1px solid rgba(250,208,44,0.18);
+  color: var(--text);
+  cursor:pointer;
+}
+
+.itemPill:hover{ border-color: rgba(250,208,44,0.45); }
+
+.itemPill.equipped{ outline: 2px solid rgba(250,208,44,0.55); }
+.itemPill.defEquipped{ outline: 2px solid rgba(66,133,244,0.55); }
+
+.pillBadge{
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(195,106,45,0.18);
+  border: 1px solid rgba(195,106,45,0.35);
+  font-size: 11px;
+  color: rgba(240,240,242,0.88);
+}
+
+/* Small confirm overlay */
+.confirmOverlay.hidden{ display:none !important; }
+.confirmOverlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index: 50;
+}
+
+.confirmCard{
+  width: 320px;
+  padding: 14px 14px 12px 14px;
+  border-radius: 16px;
+  background: rgba(17,17,19,0.92);
+  border: 1px solid rgba(250,208,44,0.18);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+}
+
 .areaInfo{
   position:absolute;
   right:12px;

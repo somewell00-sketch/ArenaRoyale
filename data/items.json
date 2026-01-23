@@ -1,0 +1,281 @@
+{
+  "fist": {
+    "id": "fist",
+    "type": "weapon",
+    "name": "Fists",
+    "description": "Bare hands. Always available when no weapon is selected. Shield blocks it.",
+    "damage": 5,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "sword": {
+    "id": "sword",
+    "type": "weapon",
+    "name": "Sword",
+    "description": "A balanced blade. Shield blocks it.",
+    "damage": 40,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "club": {
+    "id": "club",
+    "type": "weapon",
+    "name": "Club",
+    "description": "A heavy blunt weapon. Shield blocks it.",
+    "damage": 45,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "spear": {
+    "id": "spear",
+    "type": "weapon",
+    "name": "Spear",
+    "description": "Long reach. Shield blocks it.",
+    "damage": 55,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "trident": {
+    "id": "trident",
+    "type": "weapon",
+    "name": "Trident",
+    "description": "A brutal three-pronged weapon. Shield blocks it.",
+    "damage": 60,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "axe": {
+    "id": "axe",
+    "type": "weapon",
+    "name": "Axe",
+    "description": "Can break a Shield (removes it, no damage that day).",
+    "damage": 35,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": true,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": false,
+      "breaksShieldOnly": true
+    }
+  },
+  "wand": {
+    "id": "wand",
+    "type": "weapon",
+    "name": "Wand",
+    "description": "A simple wand. Shield blocks it.",
+    "damage": 30,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "knife": {
+    "id": "knife",
+    "type": "weapon",
+    "name": "Knife",
+    "description": "Stackable. Each Knife adds +15 damage. Shield blocks it.",
+    "damage": 15,
+    "uses": null,
+    "stackable": true,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "dagger": {
+    "id": "dagger",
+    "type": "weapon",
+    "name": "Dagger",
+    "description": "Stackable. Each Dagger adds +15 damage. Can cut a Net once (then becomes useless). Shield blocks it.",
+    "damage": 15,
+    "uses": null,
+    "stackable": true,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true,
+      "canCutNet": true
+    }
+  },
+  "grenade": {
+    "id": "grenade",
+    "type": "weapon",
+    "name": "Grenade",
+    "description": "One-time use. Breaks Shield and still deals damage. Hurts the user. If target has higher Dexterity, target takes half damage.",
+    "damage": 70,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": true,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": false,
+      "penetratesShield": true,
+      "selfDamage": 15,
+      "halfIfTargetDexHigher": true
+    }
+  },
+  "blowgun": {
+    "id": "blowgun",
+    "type": "weapon",
+    "name": "Blowgun",
+    "description": "Poisons the target (-10 HP per day) until cured by Medicine. Shield blocks it. Can be used twice per day.",
+    "damage": 0,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "blocksByShield": true,
+      "appliesPoison": true,
+      "usesPerDay": 2
+    }
+  },
+  "bow": {
+    "id": "bow",
+    "type": "weapon",
+    "name": "Bow & Arrows",
+    "description": "65 damage. Requires Dexterity ≥ target's Dexterity. Shield blocks it. Starts with 3 arrows.",
+    "damage": 65,
+    "uses": 3,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": true
+    },
+    "effects": {
+      "blocksByShield": true
+    }
+  },
+  "shield": {
+    "id": "shield",
+    "type": "protection",
+    "name": "Shield",
+    "description": "Blocks all weapons except Grenade and Axe. Using Shield means you cannot Attack today.",
+    "damage": null,
+    "uses": null,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {}
+  },
+  "camouflage": {
+    "id": "camouflage",
+    "type": "consumable",
+    "name": "Camouflage",
+    "description": "One use. You become invisible in the area for a day: cannot be attacked, but can still attack. Does not protect against traps.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "invisibleOneDay": true,
+      "nonTransferable": true
+    }
+  },
+  "flask": {
+    "id": "flask",
+    "type": "consumable",
+    "name": "Flask",
+    "description": "Unknown liquid. It could be Medicine or Poison. Revealed only when consumed.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "hidden": true,
+      "revealOnUse": true
+    }
+  },
+  "backpack": {
+    "id": "backpack",
+    "type": "utility",
+    "name": "Backpack",
+    "description": "Contains 2–3 items. Disappears after opening.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {
+      "minDex": null,
+      "dexGteTarget": false
+    },
+    "effects": {
+      "opensIntoLoot": true
+    }
+  }
+}

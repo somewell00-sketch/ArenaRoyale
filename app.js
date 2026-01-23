@@ -1,11 +1,28 @@
 import { MapSize, createInitialWorld } from "./state.js";
 import { generateMapData } from "./mapgen.js";
 import { MapUI } from "./mapui.js";
-import { commitPlayerAction, moveActorOneStep, endDay } from "./sim.js";
+import { commitPlayerAction, useInventoryItem, moveActorOneStep, endDay } from "./sim.js";
+import { getItemDef, ItemTypes, displayDamageLabel, inventoryCount, INVENTORY_LIMIT, itemsReady } from "./items.js";
 import { generateNpcIntents } from "./ai.js";
 import { saveToLocal, loadFromLocal, clearLocal, downloadJSON, uploadJSON } from "./storage.js";
 
 const root = document.getElementById("root");
+
+// Ensure item definitions are loaded before any UI/simulation tries to reference them.
+try {
+  await itemsReady;
+} catch (e) {
+  console.error(e);
+  root.innerHTML = `
+    <div class="screen">
+      <div class="card">
+        <div class="h1">Arena Simulator</div>
+        <div class="alert">Failed to load item definitions (data/items.json). Please reload.</div>
+      </div>
+    </div>
+  `;
+  throw e;
+}
 
 let world = null;
 
@@ -271,10 +288,16 @@ function renderGame(){
           <div class="muted" style="margin-top:12px;">Players in the area</div>
           <div id="areaPills" class="pillWrap" style="margin-top:8px;"></div>
 
+          <div id="groundItemWrap" class="hidden" style="margin-top:12px;">
+            <div class="muted">Item on the ground</div>
+            <div id="groundItemLabel" class="muted small" style="margin-top:6px;"></div>
+          </div>
+
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
+            <button id="btnCollect" class="btn" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
           </div>
 
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
@@ -297,21 +320,28 @@ function renderGame(){
         <div class="hint">Cornucopia is Area 1 • Select an area to inspect • Move only after committing an action</div>
       </main>
 
-      <!-- RIGHT: debug only -->
+      <!-- RIGHT: player inventory + debug -->
       <aside class="panel" id="rightPanel">
-        <div class="h1" style="margin:0;">Debug</div>
-        <div class="muted small">Seed <span id="seed"></span></div>
+        <div class="h1" style="margin:0;">YOU</div>
+        <div class="muted small">HP: <span id="youHp"></span> | FP: <span id="youFp"></span></div>
 
         <div class="section" style="margin-top:10px;">
-          <div class="row">
-            <button id="debugAdvance" class="btn">Advance day</button>
-          </div>
-          <div class="muted small" style="margin-top:8px;">Entities (HP + area)</div>
-          <div id="debugList" class="list" style="max-height:360px; overflow:auto;"></div>
+          <div class="muted">Inventory</div>
+          <div class="muted small" style="margin-top:6px;">Limit: <span id="invCount"></span> / ${INVENTORY_LIMIT}</div>
+          <div id="invPills" class="pillWrap" style="margin-top:10px;"></div>
+          <div class="muted small" style="margin-top:10px;">Click a weapon to equip it. Click a Shield to set it as defense. Click a consumable to use it.</div>
         </div>
 
-        <div class="section">
-          <div class="muted">Tools</div>
+        <details id="debugDetails" class="section" style="margin-top:12px;">
+          <summary class="muted" style="cursor:pointer;">Debug</summary>
+          <div class="muted small" style="margin-top:6px;">Seed <span id="seed"></span></div>
+          <div class="row" style="margin-top:8px;">
+            <button id="debugAdvance" class="btn">Advance day</button>
+          </div>
+          <div class="muted small" style="margin-top:8px;">Entities (HP • area • S/D/P)</div>
+          <div id="debugList" class="list" style="max-height:320px; overflow:auto;"></div>
+
+          <div class="muted" style="margin-top:12px;">Tools</div>
           <div class="row" style="margin-top:8px; flex-wrap:wrap; gap:8px;">
             <button id="regen" class="btn">New map</button>
             <button id="restart" class="btn">Restart</button>
@@ -321,6 +351,16 @@ function renderGame(){
               Import <input id="import" type="file" accept="application/json" style="display:none" />
             </label>
             <button id="clearLocal" class="btn">Clear save</button>
+          </div>
+        </details>
+
+        <div id="confirmModal" class="confirmOverlay hidden">
+          <div class="confirmCard">
+            <div id="confirmText" class="h2" style="margin:0 0 10px 0;">Use item?</div>
+            <div class="row" style="gap:8px;">
+              <button id="confirmYes" class="btn primary" style="flex:1;">Confirm</button>
+              <button id="confirmNo" class="btn" style="flex:1;">Cancel</button>
+            </div>
           </div>
         </div>
       </aside>
@@ -338,12 +378,38 @@ function renderGame(){
   const movesLeftEl = document.getElementById("movesLeft");
   const movesLeftEl2 = document.getElementById("movesLeft2");
   const areaPillsEl = document.getElementById("areaPills");
+  const groundItemWrap = document.getElementById("groundItemWrap");
+  const groundItemLabel = document.getElementById("groundItemLabel");
   const btnDefend = document.getElementById("btnDefend");
   const btnNothing = document.getElementById("btnNothing");
   const btnAttack = document.getElementById("btnAttack");
+  const btnCollect = document.getElementById("btnCollect");
   const btnEndDay = document.getElementById("btnEndDay");
 
   const debugList = document.getElementById("debugList");
+
+  const youHpEl = document.getElementById("youHp");
+  const youFpEl = document.getElementById("youFp");
+  const invCountEl = document.getElementById("invCount");
+  const invPillsEl = document.getElementById("invPills");
+
+  const confirmModal = document.getElementById("confirmModal");
+  const confirmText = document.getElementById("confirmText");
+  const confirmYes = document.getElementById("confirmYes");
+  const confirmNo = document.getElementById("confirmNo");
+
+  const youHpEl = document.getElementById("youHp");
+  const youFpEl = document.getElementById("youFp");
+  const invCountEl = document.getElementById("invCount");
+  const invPillsEl = document.getElementById("invPills");
+
+  const groundItemWrap = document.getElementById("groundItemWrap");
+  const groundItemLabel = document.getElementById("groundItemLabel");
+
+  const confirmModal = document.getElementById("confirmModal");
+  const confirmText = document.getElementById("confirmText");
+  const confirmYes = document.getElementById("confirmYes");
+  const confirmNo = document.getElementById("confirmNo");
 
   const areaInfoEl = document.getElementById("areaInfo");
 
@@ -358,6 +424,24 @@ function renderGame(){
       sync();
     }
   });
+
+  let pendingConsume = null;
+  confirmNo.onclick = () => {
+    pendingConsume = null;
+    confirmModal.classList.add("hidden");
+  };
+  confirmYes.onclick = () => {
+    if(!pendingConsume){ confirmModal.classList.add("hidden"); return; }
+    const idx = pendingConsume.idx;
+    const res = useInventoryItem(world, "player", idx, "player");
+    world = res.nextWorld;
+    uiState.dayEvents.push(...(res.events || []));
+    saveToLocal(world);
+    pendingConsume = null;
+    confirmModal.classList.add("hidden");
+    sync();
+    openResultDialog(res.events || []);
+  };
 
   function handleAreaClick(id){
     if(!world) return;
@@ -449,6 +533,90 @@ function renderGame(){
     }
   }
 
+  function renderGroundItem(){
+    const p = world.entities.player;
+    const a = world.map.areasById[String(p.areaId)];
+    const ground = Array.isArray(a?.groundItems) ? a.groundItems : [];
+    if(!groundItemWrap || !groundItemLabel) return;
+
+    if(ground.length === 0){
+      groundItemWrap.classList.add("hidden");
+      btnCollect.classList.add("hidden");
+      return;
+    }
+
+    const top = ground[0];
+    const def = getItemDef(top.defId);
+    const qty = top.qty || 1;
+    const name = def ? def.name : top.defId;
+    const extra = def && def.type === ItemTypes.WEAPON ? ` ${escapeHtml(displayDamageLabel(def.id, qty))}` : "";
+    groundItemWrap.classList.remove("hidden");
+    btnCollect.classList.remove("hidden");
+    groundItemLabel.innerHTML = `${escapeHtml(name)}${qty > 1 ? ` x${escapeHtml(String(qty))}` : ""}${extra}`;
+
+    const full = inventoryCount(p.inventory) >= INVENTORY_LIMIT;
+    btnCollect.disabled = full || uiState.phase !== "needs_action";
+    btnCollect.title = full ? "Inventory is full. Discard something first." : "Pick up the item on the ground";
+  }
+
+  function renderInventory(){
+    const p = world.entities.player;
+    youHpEl.textContent = String(p.hp ?? 100);
+    youFpEl.textContent = String(p.fp ?? 70);
+    invCountEl.textContent = String(inventoryCount(p.inventory));
+
+    const items = p.inventory?.items || [];
+    const weaponEq = p.inventory?.equipped?.weaponDefId;
+    const defEq = p.inventory?.equipped?.defenseDefId;
+
+    invPillsEl.innerHTML = items.length ? items.map((it, idx) => {
+      const def = getItemDef(it.defId);
+      const name = def ? def.name : it.defId;
+      const qty = it.qty || 1;
+      const dmg = def?.type === ItemTypes.WEAPON ? displayDamageLabel(def.id, qty) : "";
+      const eq = (weaponEq && it.defId === weaponEq) ? "equipped" : "";
+      const de = (defEq && it.defId === defEq) ? "defEquipped" : "";
+      const uses = (it.usesLeft != null) ? ` • ${escapeHtml(String(it.usesLeft))} uses` : "";
+      const tip = def ? def.description : "";
+      const badge = def?.type === ItemTypes.WEAPON ? `<span class="pillBadge">${escapeHtml(dmg || "")}</span>` : "";
+      const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
+      return `<button class="itemPill ${eq} ${de}" data-idx="${idx}" title="${escapeHtml(tip)}">
+        <span class="pillName">${escapeHtml(name)}${stack}</span>
+        ${badge}
+      </button>`;
+    }).join("") : `<div class="muted small">Empty</div>`;
+
+    // interactions
+    invPillsEl.querySelectorAll(".itemPill").forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.getAttribute("data-idx"));
+        const it = items[idx];
+        const def = getItemDef(it.defId);
+        if(!def) return;
+
+        if(def.type === ItemTypes.WEAPON){
+          p.inventory.equipped.weaponDefId = def.id;
+          saveToLocal(world);
+          renderInventory();
+          return;
+        }
+        if(def.type === ItemTypes.PROTECTION){
+          p.inventory.equipped.defenseDefId = def.id;
+          saveToLocal(world);
+          renderInventory();
+          return;
+        }
+        if(def.type === ItemTypes.CONSUMABLE){
+          // confirm modal
+          pendingConsume = { idx };
+          confirmText.textContent = `Use ${def.name}?`;
+          confirmModal.classList.remove("hidden");
+          return;
+        }
+      };
+    });
+  }
+
   function sync(){
     if(!world) return;
 
@@ -458,6 +626,9 @@ function renderGame(){
     const p = world.entities.player;
 
     curAreaEl.textContent = String(p.areaId);
+
+    renderInventory();
+    renderGroundItem();
 
     const movesLeft = Math.max(0, MAX_MOVES_PER_DAY - uiState.movesUsed);
     movesLeftEl.textContent = String(movesLeft);
@@ -526,11 +697,13 @@ function renderGame(){
       btnDefend.disabled = true;
       btnNothing.disabled = true;
       btnAttack.disabled = true;
+      btnCollect.disabled = true;
       btnEndDay.disabled = true;
     } else {
       btnDefend.disabled = false;
       btnNothing.disabled = false;
       btnAttack.disabled = false;
+      // Collect availability handled in renderGroundItem()
       btnEndDay.disabled = false;
     }
   }
@@ -550,6 +723,17 @@ function renderGame(){
   btnNothing.onclick = () => {
     if(!world) return;
     const { nextWorld, events } = commitPlayerAction(world, { kind:"NOTHING" });
+    world = nextWorld;
+    uiState.dayEvents.push(...events);
+    uiState.phase = "explore";
+    saveToLocal(world);
+    sync();
+    openResultDialog(events);
+  };
+
+  btnCollect.onclick = () => {
+    if(!world) return;
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: 0 });
     world = nextWorld;
     uiState.dayEvents.push(...events);
     uiState.phase = "explore";
@@ -663,7 +847,6 @@ function renderGame(){
   }
 
   function formatEvents(events){
-    const p = world?.entities?.player;
     const npcName = (id) => {
       if(id === "player") return "You";
       const n = world?.entities?.npcs?.[id];
@@ -672,32 +855,105 @@ function renderGame(){
 
     const out = [];
     for(const e of (events || [])){
-      if(e.type === "ATTACK"){
-        if(e.ok){
-          out.push(`You attacked ${npcName(e.target)} and dealt ${e.dmgDealt} damage.`);
-        } else {
-          out.push("You tried to attack, but there was no valid target.");
+      switch(e.type){
+        case "ATTACK": {
+          if(e.ok){
+            const weap = e.weapon ? ` with ${e.weapon}` : "";
+            if(e.dmgDealt === 0) out.push(`You attacked ${npcName(e.target)}${weap}, but it was blocked.`);
+            else out.push(`You attacked ${npcName(e.target)}${weap} and dealt ${e.dmgDealt} damage.`);
+          } else {
+            if(e.reason === "target_invisible") out.push("You tried to attack, but the target was invisible.");
+            else out.push("You tried to attack, but there was no valid target.");
+          }
+          break;
         }
-      } else if(e.type === "DEFEND"){
-        out.push("You defended.");
-        if(e.note === "nothing_happened") out.push("Nothing happened.");
-      } else if(e.type === "NOTHING"){
-        out.push("You did nothing.");
-        if(e.note) out.push("Nothing happened.");
-      } else if(e.type === "MOVE"){
-        out.push(`You moved from Area ${e.from} to Area ${e.to}.`);
-      } else if(e.type === "DAMAGE_RECEIVED"){
-        if(e.from === "hazard"){
-          if(e.reducedFrom != null) out.push(`You took ${e.dmg} environmental damage (reduced from ${e.reducedFrom}).`);
-          else out.push(`You took ${e.dmg} environmental damage.`);
-        } else {
-          out.push(`You took ${e.dmg} damage from ${npcName(e.from)}.`);
+        case "DEFEND": {
+          out.push(e.with ? `You defended with ${e.with}.` : "You defended.");
+          break;
         }
-      } else if(e.type === "DEATH"){
-        if(e.who === "player") out.push("You died.");
-        else out.push(`${npcName(e.who)} died.`);
-      } else if(e.type === "ARRIVAL"){
-        out.push(`${npcName(e.who)} arrived in your area (Area ${e.to}).`);
+        case "NOTHING": {
+          out.push("You did nothing.");
+          if(e.note === "caught_off_guard") out.push("You were caught off guard.");
+          if(e.note === "quiet_day") out.push("Nothing happened.");
+          if(e.note === "camouflage_prevented_attack") out.push("Your camouflage prevented an ambush.");
+          break;
+        }
+        case "COLLECT": {
+          if(e.ok){
+            if(e.opened){
+              out.push("You opened a backpack.");
+              if(e.gained?.length) out.push(`You gained: ${e.gained.map(x => getItemDef(x)?.name || x).join(", ")}.`);
+            } else {
+              const def = getItemDef(e.itemDefId);
+              const nm = def?.name || e.itemDefId;
+              const qty = e.qty && e.qty > 1 ? ` x${e.qty}` : "";
+              out.push(`You picked up ${nm}${qty}.`);
+            }
+          } else {
+            if(e.reason === "inventory_full") out.push("You couldn't pick it up: your inventory is full.");
+            else out.push("You couldn't pick up the item.");
+          }
+          break;
+        }
+        case "SHIELD_BLOCK": {
+          if(e.who === "player") out.push("Your shield blocked the attack.");
+          else out.push(`${npcName(e.who)} blocked the attack with a shield.`);
+          break;
+        }
+        case "SHIELD_BROKEN": {
+          out.push(`${npcName(e.who)}'s shield was broken.`);
+          break;
+        }
+        case "SELF_DAMAGE": {
+          out.push(`You were hurt by your own ${e.weapon} (${e.dmg} damage).`);
+          break;
+        }
+        case "POISON_APPLIED": {
+          out.push(`${npcName(e.who)} was poisoned.`);
+          break;
+        }
+        case "POISON_TICK": {
+          out.push(`${npcName(e.who)} took ${e.dmg} poison damage.`);
+          break;
+        }
+        case "HEAL": {
+          if(e.who === "player") out.push(`You healed ${e.amount} HP.`);
+          else out.push(`${npcName(e.who)} healed ${e.amount} HP.`);
+          break;
+        }
+        case "POISON_CURED": {
+          if(e.who === "player") out.push("Your poison was cured.");
+          else out.push(`${npcName(e.who)}'s poison was cured.`);
+          break;
+        }
+        case "FLASK_REVEAL": {
+          out.push(`The flask was ${e.kind}.`);
+          break;
+        }
+        case "MOVE": {
+          out.push(`You moved from Area ${e.from} to Area ${e.to}.`);
+          break;
+        }
+        case "DAMAGE_RECEIVED": {
+          if(e.from === "environment") out.push(`You took ${e.dmg} damage from the environment.`);
+          else out.push(`You took ${e.dmg} damage from ${npcName(e.from)}.`);
+          break;
+        }
+        case "INFO": {
+          if(e.msg) out.push(e.msg);
+          break;
+        }
+        case "DEATH": {
+          if(e.who === "player") out.push("You died.");
+          else out.push(`${npcName(e.who)} died.`);
+          break;
+        }
+        case "ARRIVAL": {
+          out.push(`${npcName(e.who)} arrived in your area (Area ${e.to}).`);
+          break;
+        }
+        default:
+          break;
       }
     }
     return out;

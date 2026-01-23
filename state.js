@@ -6,6 +6,17 @@ export const MapSize = {
   LARGE: 72
 };
 
+function createEmptyInventory(){
+  return {
+    // items: [{ defId, qty, usesLeft, meta }]
+    items: [],
+    equipped: {
+      weaponDefId: null,
+      defenseDefId: null
+    }
+  };
+}
+
 
 
 const DISTRICT_NAMES = {
@@ -606,7 +617,7 @@ for (let i = 1; i <= npcCount; i++){
     kills: 0,
     attrs: randomAttrs7(rng),
     status: [],
-    inventory: {},
+    inventory: createEmptyInventory(),
     memory: { goal: "survive" }
   };
 }
@@ -633,7 +644,7 @@ for (let i = 1; i <= npcCount; i++){
         kills: 0,
         attrs: resolvedPlayerAttrs,
         status: [],
-        inventory: {},
+        inventory: createEmptyInventory(),
         memory: { goal: "survive" }
       },
       npcs
@@ -657,6 +668,33 @@ for (let i = 1; i <= npcCount; i++){
   const a1 = world.map?.areasById?.["1"];
   if(a1){
     a1.biome = "Cornucopia";
+  }
+
+  // Initialize ground items for all areas
+  for(const a of Object.values(world.map?.areasById || {})){
+    if(!a) continue;
+    if(!Array.isArray(a.groundItems)) a.groundItems = [];
+  }
+
+  // Cornucopia starting loot: backpacks = 2/3 of total players
+  // Each backpack contains 2–3 items.
+  const backpacks = Math.max(1, Math.floor((total * 2) / 3));
+  const weaponsPool = ["sword","club","spear","trident","axe","wand","knife","dagger","bow","blowgun","grenade","shield","camouflage","flask"];
+
+  for(let i=0;i<backpacks;i++){
+    a1.groundItems.push({ defId: "backpack", qty: 1, meta: { seedTag: `bp_${i}` } });
+  }
+  // A few loose items too
+  const loose = Math.max(3, Math.floor(total / 2));
+  for(let i=0;i<loose;i++){
+    const pick = weaponsPool[Math.floor(rng.next() * weaponsPool.length)];
+    const qty = (pick === "knife" || pick === "dagger") ? (1 + Math.floor(rng.next()*3)) : 1;
+    const meta = {};
+    if(pick === "flask"){
+      // Pre-roll what the flask is. Revealed only when consumed.
+      meta.hiddenKind = (rng.next() < 0.5) ? "medicine" : "poison";
+    }
+    a1.groundItems.push({ defId: pick, qty, meta });
   }
 
   return world;
