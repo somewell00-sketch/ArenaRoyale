@@ -208,8 +208,6 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     prevNpcAreas[npc.id] = npc.areaId;
   }
 
-  applyClosuresForDay(next, day);
-
   // NPC movement intents (ignore combat declarations for now)
   for(const act of (npcIntents || [])){
     if(!act || !act.source) continue;
@@ -246,7 +244,14 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     }
   }
 
+  // Advance to the next day first, then apply area closures/scheduling so that
+  // the map state the player sees on the new day already contains:
+  // - areas that disappeared today (isActive=false)
+  // - areas that will disappear tomorrow (willCloseOnDay=newDay+1)
+  // This timing is important for the "red border one day before" UI.
   next.meta.day += 1;
+  applyClosuresForDay(next, next.meta.day);
+
   next.log.days.push({ day, events });
 
   return next;

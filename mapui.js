@@ -205,16 +205,19 @@ export class MapUI {
         ctx.strokeStyle = "rgba(220,60,60,0.95)";
         ctx.lineWidth = 3;
         ctx.setLineDash([]);
+        drawPath(ctx, c.poly);
         ctx.stroke();
       } else if (isClosed){
         ctx.strokeStyle = "rgba(0,0,0,0.25)";
         ctx.lineWidth = 2;
         ctx.setLineDash([6,4]);
+        drawPath(ctx, c.poly);
         ctx.stroke();
       } else {
         ctx.strokeStyle = "rgba(0,0,0,0.22)";
         ctx.lineWidth = 1;
         ctx.setLineDash([]);
+        drawPath(ctx, c.poly);
         ctx.stroke();
       }
 
