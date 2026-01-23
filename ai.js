@@ -89,18 +89,10 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
   const hasWater = !!area?.hasWater;
   const ground = Array.isArray(area?.groundItems) ? area.groundItems : [];
 
-  // Hunger/FP: if low and water exists, prefer drinking.
-  if((npc.fp ?? 0) <= 15 && hasWater){
-    return { source: npc.id, type: "DRINK", payload: {} };
-  }
-
-  // Collect: greed-based; pick the highest-value visible ground item.
-  // Collect: NPCs should actually pick up loot (esp. early game).
-  // Rule of thumb:
-  // - If there are ground items and no immediate targets, strongly prefer collecting.
-  // - If there are targets, compare "collect value" vs "attack value" using traits.
-  if(ground.length && invN < INVENTORY_LIMIT){
-    // Score all visible ground items.
+  // FORCE_COLLECT_CORN: early Cornucopia scramble.
+  // On day 1–2, if the Cornucopia has loot and the NPC has inventory space,
+  // prioritize collecting over fighting/defending.
+  if(Number(area?.id) === 1 && day <= 2 && ground.length && invN < INVENTORY_LIMIT){
     const scoredItems = [];
     for(let i=0;i<ground.length;i++){
       const inst = ground[i];
@@ -108,27 +100,30 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
       scoredItems.push({ idx: i, score: itemValue(def, inst) });
     }
     scoredItems.sort((a,b)=>b.score-a.score);
-
-    // Deterministic variety: choose among the top few based on traits + jitter.
-    // This prevents everyone from always targeting the single "best" weapon.
     const topK = scoredItems.slice(0, Math.min(4, scoredItems.length));
-    const r = hash01(seed, day, `collect_pick|${npc.id}`);
-    // Greedier NPCs skew toward the top; cautious NPCs spread a bit.
-    const skew = clamp01(0.35 + traits.greed * 0.55 - traits.caution * 0.15);
-    const pickPos = Math.floor(Math.pow(r, 1.0 + (1.5 * (1 - skew))) * topK.length);
+    const r = hash01(seed, day, `collect_pick|${npc.id}|corn`);
+    const pickPos = Math.floor(r * topK.length);
     const chosen = topK[Math.max(0, Math.min(topK.length - 1, pickPos))];
-    const bestIdx = chosen.idx;
-    const bestScore = chosen.score;
+    return { source: npc.id, type: "COLLECT", payload: { itemIndex: chosen.idx } };
+  }
 
-    // Base: looters are more likely to grab something immediately.
-    // Deterministic jitter prevents everyone from acting identically.
-    const jitter = (hash01(seed, day, `collect_jitter|${npc.id}`) - 0.5) * 0.12;
-    // bestScore is already ~0..1, so keep it in that range.
-    const collectScore = bestScore * (0.75 + traits.greed * 1.10) + jitter;
+  // Hunger/FP: if low and water exists, prefer drinking.
+  if((npc.fp ?? 0) <= 15 && hasWater){
+    return { source: npc.id, type: "DRINK", payload: {} };
+  }
 
-    // If no visible targets, almost always collect.
-    const noTargets = (obs.hereActors || []).length === 0;
-    if(noTargets || collectScore >= (0.30 + traits.caution * 0.20)){
+  // Collect: greed-based; pick the highest-value visible ground item.
+  if(ground.length && invN < INVENTORY_LIMIT){
+    const r = hash01(seed, day, `npc_collect_bias|${npc.id}`);
+    if(r < (0.10 + traits.greed * 0.35)){
+      let bestIdx = 0;
+      let bestScore = -1e9;
+      for(let i=0;i<ground.length;i++){
+        const inst = ground[i];
+        const def = getItemDef(inst?.defId);
+        const score = itemValue(def, inst);
+        if(score > bestScore){ bestScore = score; bestIdx = i; }
+      }
       return { source: npc.id, type: "COLLECT", payload: { itemIndex: bestIdx } };
     }
   }
@@ -266,7 +261,9 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     if(other._today?.invisible) continue;
     crowd++;
   }
-  const crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03) + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
+  let crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03) + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
+  // Early Cornucopia: allow crowding so more NPCs contest loot.
+  if(Number(areaId) === 1 && day === 1) crowdPenalty *= 0.2;
 
   const needFood = clamp01((25 - (npc.fp ?? 0)) / 25);
   const safety = (a.threatClass === "safe" ? 0.45 : (a.threatClass === "neutral" ? 0.2 : -0.25));
@@ -362,8 +359,6 @@ function itemValue(def, inst){
   if(!def) return 0.05;
   if(def.type === ItemTypes.PROTECTION) return 0.9;
   if(def.type === ItemTypes.CONSUMABLE) return 0.7;
-  // Backpacks/containers are high priority early game.
-  if(def.effects?.opensIntoLoot) return 0.88;
   if(def.type === ItemTypes.WEAPON){
     let base = (def.damage ?? 0) / 100;
     if(def.stackable) base *= 0.8;

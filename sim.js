@@ -622,6 +622,12 @@ export function commitPlayerAction(world, action){
       const startAreas = { player: player.areaId };
       for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
 
+  // RESET_TODAY_FLAGS: clear per-day flags (defend/invisible/fed/etc.).
+  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
+    if(!e) continue;
+    e._today = {};
+  }
+
       const fight = resolveTieFight(next, best.map(b=>b.id), area.id, { seed, day, killsThisDay: (next.flags?.killsThisDay || (next.flags.killsThisDay=[])), itemDefId: item.defId, startAreas });
       winnerId = fight.winner || null;
       events.push({ type:"GROUND_CONTEST", areaId: area.id, itemDefId: item.defId, outcome:"tie_fight", tied: best.map(b=>b.id), winner: winnerId });
@@ -1010,6 +1016,12 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   // Snapshot starting positions for deterministic action resolution (collect disputes).
   const startAreas = { player: next.entities.player.areaId };
   for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
+
+  // RESET_TODAY_FLAGS: clear per-day flags (defend/invisible/fed/etc.).
+  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
+    if(!e) continue;
+    e._today = {};
+  }
 
   // --- NPC posture intents (ATTACK/DEFEND/NOTHING/DRINK/SET_TRAP) ---
   // We resolve posture before movement. Attacks are simultaneous; counter-attack only occurs
@@ -1503,10 +1515,7 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
       byIndex.get(idx).push(r);
     }
 
-    // IMPORTANT: resolve from highest index to lowest so that
-    // removing an item does not shift the remaining indices and
-    // invalidate other contenders' requested indices.
-    const indices = Array.from(byIndex.keys()).sort((a,b)=>b-a);
+    const indices = Array.from(byIndex.keys()).sort((a,b)=>a-b);
     for(const idx of indices){
       const item = area.groundItems[idx];
       if(!item) continue;
@@ -1546,6 +1555,14 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
 
       // Remove from ground and add to inventory.
       const removed = area.groundItems.splice(idx, 1)[0];
+
+      // OPEN_BACKPACK_ON_COLLECT: backpacks open immediately and disappear.
+      const removedDef = getItemDef(removed?.defId);
+      if(removedDef?.effects?.opensIntoLoot){
+        openBackpackIntoInventory(world, winner.actor, area, removed, events, { seed, day });
+        events.push({ type:"COLLECT", ok:true, who: winner.who, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id, note:"opened_backpack" });
+        continue;
+      }
 
       // Auto-consume resources on collect (finite).
       const consumed = applyOnCollect(world, winner.actor, area, removed, events);
