@@ -1,6 +1,7 @@
 import { cloneWorld } from "./state.js";
 import {
   getItemDef,
+  getAllItemDefs,
   ItemTypes,
   computeWeaponDamage,
   isBlockedByShield,
@@ -75,6 +76,53 @@ function initiativeScore(seed, day, actorId){
 
 function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
+}
+
+function openBackpackIntoInventory(world, owner, area, backpackInstance, events, { seed, day }){
+  // Backpack contains 2–3 items (1d2+1). It disappears when collected.
+  const count = 2 + Math.floor(prng(seed, day, `bp_count_${backpackInstance?.meta?.seedTag || ""}`) * 2); // 2 or 3
+
+  const defs = getAllItemDefs();
+  const pool = Object.values(defs || {}).filter(d => {
+    if(!d || !d.id) return false;
+    if(d.id === "backpack") return false;
+    if(d.id === "fist") return false;
+    // keep it simple: only real items
+    return [ItemTypes.WEAPON, ItemTypes.PROTECTION, ItemTypes.CONSUMABLE, ItemTypes.UTILITY].includes(d.type);
+  });
+
+  function pickFromPool(i){
+    if(!pool.length) return null;
+    const r = prng(seed, day, `bp_pick_${backpackInstance?.meta?.seedTag || ""}_${i}`);
+    return pool[Math.floor(r * pool.length)];
+  }
+
+  events.push({ type:"BACKPACK_OPEN", who: owner.id, areaId: area.id, count });
+
+  for(let i=0;i<count;i++){
+    const def = pickFromPool(i);
+    if(!def) continue;
+
+    let inst = { defId: def.id, qty: 1, meta: {} };
+    if(def.stackable && (def.id === "knife" || def.id === "dagger")){
+      const rQty = 1 + Math.floor(prng(seed, day, `bp_qty_${backpackInstance?.meta?.seedTag || ""}_${i}`) * 3);
+      inst.qty = Math.max(1, Math.min(7, rQty));
+    }
+
+    if(def.id === "flask"){
+      inst.meta.hiddenKind = (prng(seed, day, `bp_flask_${backpackInstance?.meta?.seedTag || ""}_${i}`) < 0.5) ? "medicine" : "poison";
+    }
+
+    const ok = addToInventory(owner.inventory, inst);
+    if(ok.ok){
+      events.push({ type:"BACKPACK_ITEM", ok:true, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id });
+    } else {
+      // Inventory full: drop to ground.
+      area.groundItems = Array.isArray(area.groundItems) ? area.groundItems : [];
+      area.groundItems.push(inst);
+      events.push({ type:"BACKPACK_ITEM", ok:false, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id, reason:"inventory_full" });
+    }
+  }
 }
 
 export function commitPlayerAction(world, action){
@@ -153,6 +201,7 @@ export function commitPlayerAction(world, action){
     return (entity.status || []).some(s => s?.type === kind);
   }
 
+  
   if(kind === "COLLECT"){
     const area = next.map.areasById[String(player.areaId)];
     if(!area || !Array.isArray(area.groundItems) || area.groundItems.length === 0){
@@ -160,22 +209,85 @@ export function commitPlayerAction(world, action){
       return { nextWorld: next, events };
     }
 
-    if(inventoryCount(player.inventory) >= INVENTORY_LIMIT){
-      events.push({ type:"COLLECT", ok:false, reason:"inventory_full" });
-      return { nextWorld: next, events };
-    }
-
-    // Queue the collect to be resolved deterministically in endDay.
-    // This is required to support dexterity disputes and item-fight tiebreakers.
     const idx = Number(action?.itemIndex ?? 0);
     const item = area.groundItems[idx] ?? area.groundItems[0];
     if(!item){
       events.push({ type:"COLLECT", ok:false, reason:"missing_item" });
       return { nextWorld: next, events };
     }
-    player._intent = player._intent || {};
-    player._intent.collect = { day, areaId: player.areaId, itemIndex: idx };
-    events.push({ type:"COLLECT", ok:true, queued:true, itemDefId: item.defId, qty: item.qty || 1 });
+
+    // Determine NPC contenders who are also trying to collect this same ground item today.
+    // We mirror the NPC intent generator to keep this deterministic and single-player friendly.
+    const contenders = [{ id:"player", actor: player }];
+    for(const npc of Object.values(next.entities.npcs || {})){
+      if((npc.hp ?? 0) <= 0) continue;
+      if(npc.areaId !== player.areaId) continue;
+
+      const npcArea = next.map.areasById[String(npc.areaId)];
+      const ground = Array.isArray(npcArea?.groundItems) ? npcArea.groundItems : [];
+      if(!ground.length) continue;
+
+      const invCount = inventoryCount(npc.inventory);
+      const rCollect = prng(seed, day, `collect_${npc.id}`);
+      if(invCount < INVENTORY_LIMIT && rCollect < 0.25){
+        const pickIdx = Math.floor(prng(seed+1337, day, `collect_pick_${npc.id}`) * ground.length);
+        if(pickIdx === idx){
+          contenders.push({ id: npc.id, actor: npc });
+        }
+      }
+    }
+
+    // Decide winner: higher Dexterity wins. Tie for best => fight now.
+    const scored = contenders.map(c => ({
+      ...c,
+      D: c.actor.attrs?.D ?? 0,
+      init: initiativeScore(seed, day, c.id)
+    })).sort((a,b)=>b.D-a.D || b.init-a.init);
+
+    const bestD = scored[0].D;
+    const best = scored.filter(x => x.D === bestD);
+
+    let winnerId = null;
+    if(best.length === 1){
+      winnerId = best[0].id;
+      events.push({ type:"GROUND_CONTEST", areaId: area.id, itemDefId: item.defId, outcome:"dex_win", winner: winnerId });
+    } else {
+      const startAreas = { player: player.areaId };
+      for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
+
+      const fight = resolveTieFight(next, best.map(b=>b.id), area.id, { seed, day, killsThisDay: (next.flags?.killsThisDay || (next.flags.killsThisDay=[])), itemDefId: item.defId, startAreas });
+      winnerId = fight.winner || null;
+      events.push({ type:"GROUND_CONTEST", areaId: area.id, itemDefId: item.defId, outcome:"tie_fight", tied: best.map(b=>b.id), winner: winnerId });
+    }
+
+    const winner = winnerId ? actorById(next, winnerId) : null;
+    if(!winner || (winner.hp ?? 0) <= 0){
+      events.push({ type:"COLLECT", ok:false, reason:"no_winner", itemDefId: item.defId, areaId: area.id });
+      return { nextWorld: next, events };
+    }
+
+    // Remove the item from the ground now (it is claimed by the winner).
+    const removed = area.groundItems.splice(idx, 1)[0];
+
+    // Backpack rule: opens immediately into 2–3 items, backpack disappears.
+    if(removed.defId === "backpack"){
+      const lootEvents = [];
+      openBackpackIntoInventory(next, winner, area, removed, lootEvents, { seed, day });
+      events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId:"backpack", qty:1, areaId: area.id, note:"opened" });
+      events.push(...lootEvents);
+      return { nextWorld: next, events };
+    }
+
+    // Normal item pickup.
+    const ok = addToInventory(winner.inventory, removed);
+    if(!ok.ok){
+      // Can't take: drop it back to ground (end) and report.
+      area.groundItems.push(removed);
+      events.push({ type:"COLLECT", ok:false, who: winnerId, reason:"inventory_full", itemDefId: removed.defId, areaId: area.id });
+      return { nextWorld: next, events };
+    }
+
+    events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id });
     return { nextWorld: next, events };
   }
 
@@ -469,11 +581,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
   // --- 6.1 Ground items: resolve COLLECT disputes (before moves) ---
   const collectReqs = [];
-  // Player queued collect
-  const pIntent = next.entities.player._intent?.collect;
-  if(pIntent && pIntent.day === day){
-    collectReqs.push({ who: "player", areaId: pIntent.areaId, itemIndex: pIntent.itemIndex });
-  }
+  // Player collects resolve immediately on click.
   // NPC collect intents
   for(const act of (npcIntents || [])){
     if(act?.type === "COLLECT" && act?.source){
@@ -484,8 +592,6 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
   resolveCollectContests(next, collectReqs, events, { seed, day, killsThisDay, startAreas });
 
-  // Clear one-day intent after it is consumed
-  if(next.entities.player._intent) next.entities.player._intent.collect = null;
 
   // NPC movement intents (ignore combat declarations for now)
   for(const act of (npcIntents || [])){

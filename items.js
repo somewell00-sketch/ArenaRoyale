@@ -98,6 +98,10 @@ export function getItemDef(id){
   return ITEM_DEFS[id] || null;
 }
 
+export function getAllItemDefs(){
+  return ITEM_DEFS;
+}
+
 export function isStackable(defId){
   const d = getItemDef(defId);
   return !!d?.stackable;

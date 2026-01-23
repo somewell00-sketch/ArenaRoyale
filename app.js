@@ -582,6 +582,19 @@ function renderGame(){
         uiState.selectedGroundIndex = idx;
         uiState.selectionMode = "item";
         uiState.selectedTarget = null;
+
+        // Click-to-collect: resolves immediately (counts as your action for the day).
+        if(uiState.phase === "needs_action"){
+          const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: idx });
+          world = nextWorld;
+          uiState.dayEvents.push(...events);
+          uiState.phase = "explore";
+          saveToLocal(world);
+          sync();
+          openResultDialog(events);
+          return;
+        }
+
         renderAreaPills();
         renderGroundItem();
       };
