@@ -368,6 +368,8 @@ textarea{
 .playerPill.selected{ outline: 2px solid rgba(255, 59, 59, 0.55); }
 
 .pillName{ font-weight:700; }
+.pillIcon{ font-size: 14px; line-height: 1; }
+
 .pillSub{ color: rgba(240,240,242,0.70); font-size: 12px; }
 
 /* Inventory pills */
@@ -387,6 +389,8 @@ textarea{
 
 .itemPill.equipped{ outline: 2px solid rgba(250,208,44,0.55); }
 .itemPill.defEquipped{ outline: 2px solid rgba(66,133,244,0.55); }
+.itemPill.ground.selected{ outline: 2px solid rgba(250,208,44,0.55); }
+
 
 .pillBadge{
   padding: 2px 8px;

@@ -2,7 +2,7 @@ import { MapSize, createInitialWorld } from "./state.js";
 import { generateMapData } from "./mapgen.js";
 import { MapUI } from "./mapui.js";
 import { commitPlayerAction, useInventoryItem, moveActorOneStep, endDay } from "./sim.js";
-import { getItemDef, ItemTypes, displayDamageLabel, inventoryCount, INVENTORY_LIMIT, itemsReady } from "./items.js";
+import { getItemDef, getItemIcon, ItemTypes, displayDamageLabel, inventoryCount, INVENTORY_LIMIT, itemsReady } from "./items.js";
 import { generateNpcIntents } from "./ai.js";
 import { saveToLocal, loadFromLocal, clearLocal, downloadJSON, uploadJSON } from "./storage.js";
 
@@ -289,8 +289,8 @@ function renderGame(){
           <div id="areaPills" class="pillWrap" style="margin-top:8px;"></div>
 
           <div id="groundItemWrap" class="hidden" style="margin-top:12px;">
-            <div class="muted">Item on the ground</div>
-            <div id="groundItemLabel" class="muted small" style="margin-top:6px;"></div>
+            <div class="muted">Items on the ground</div>
+            <div id="groundItemPills" class="pillWrap" style="margin-top:8px;"></div>
           </div>
 
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
@@ -379,7 +379,7 @@ function renderGame(){
   const movesLeftEl2 = document.getElementById("movesLeft2");
   const areaPillsEl = document.getElementById("areaPills");
   const groundItemWrap = document.getElementById("groundItemWrap");
-  const groundItemLabel = document.getElementById("groundItemLabel");
+  const groundItemPills = document.getElementById("groundItemPills");
   const btnDefend = document.getElementById("btnDefend");
   const btnNothing = document.getElementById("btnNothing");
   const btnAttack = document.getElementById("btnAttack");
@@ -524,26 +524,52 @@ function renderGame(){
     const p = world.entities.player;
     const a = world.map.areasById[String(p.areaId)];
     const ground = Array.isArray(a?.groundItems) ? a.groundItems : [];
-    if(!groundItemWrap || !groundItemLabel) return;
+    if(!groundItemWrap || !groundItemPills) return;
 
     if(ground.length === 0){
       groundItemWrap.classList.add("hidden");
       btnCollect.classList.add("hidden");
+      uiState.selectedGroundIndex = null;
       return;
     }
 
-    const top = ground[0];
-    const def = getItemDef(top.defId);
-    const qty = top.qty || 1;
-    const name = def ? def.name : top.defId;
-    const extra = def && def.type === ItemTypes.WEAPON ? ` ${escapeHtml(displayDamageLabel(def.id, qty))}` : "";
     groundItemWrap.classList.remove("hidden");
     btnCollect.classList.remove("hidden");
-    groundItemLabel.innerHTML = `${escapeHtml(name)}${qty > 1 ? ` x${escapeHtml(String(qty))}` : ""}${extra}`;
+
+    // Keep selection stable when possible
+    if(uiState.selectedGroundIndex == null || uiState.selectedGroundIndex < 0 || uiState.selectedGroundIndex >= ground.length){
+      uiState.selectedGroundIndex = 0;
+    }
+
+    groundItemPills.innerHTML = ground.map((it, idx) => {
+      const def = getItemDef(it.defId);
+      const name = def ? def.name : it.defId;
+      const icon = getItemIcon(it.defId);
+      const qty = it.qty || 1;
+      const dmg = def?.type === ItemTypes.WEAPON ? displayDamageLabel(def.id, qty) : "";
+      const badge = def?.type === ItemTypes.WEAPON ? `<span class="pillBadge">${escapeHtml(dmg || "")}</span>` : "";
+      const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
+      const tip = def ? def.description : "";
+      const sel = (idx === uiState.selectedGroundIndex) ? "selected" : "";
+      return `<button class="itemPill ground ${sel}" data-gidx="${idx}" title="${escapeHtml(tip)}">
+        <span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>
+        <span class="pillIcon" aria-hidden="true">${escapeHtml(getItemIcon(it.defId))}</span>
+        <span class="pillName">${escapeHtml(name)}${stack}</span>
+        ${badge}
+      </button>`;
+    }).join("");
+
+    groundItemPills.querySelectorAll(".itemPill.ground").forEach(btn => {
+      btn.onclick = () => {
+        const idx = Number(btn.getAttribute("data-gidx"));
+        uiState.selectedGroundIndex = idx;
+        renderGroundItem();
+      };
+    });
 
     const full = inventoryCount(p.inventory) >= INVENTORY_LIMIT;
     btnCollect.disabled = full || uiState.phase !== "needs_action";
-    btnCollect.title = full ? "Inventory is full. Discard something first." : "Pick up the item on the ground";
+    btnCollect.title = full ? "Inventory is full. Discard something first." : "Pick up the selected item";
   }
 
   function renderInventory(){
@@ -568,6 +594,7 @@ function renderGame(){
       const badge = def?.type === ItemTypes.WEAPON ? `<span class="pillBadge">${escapeHtml(dmg || "")}</span>` : "";
       const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
       return `<button class="itemPill ${eq} ${de}" data-idx="${idx}" title="${escapeHtml(tip)}">
+        <span class="pillIcon" aria-hidden="true">${escapeHtml(getItemIcon(it.defId))}</span>
         <span class="pillName">${escapeHtml(name)}${stack}</span>
         ${badge}
       </button>`;
@@ -720,7 +747,7 @@ function renderGame(){
 
   btnCollect.onclick = () => {
     if(!world) return;
-    const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: 0 });
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: (uiState.selectedGroundIndex ?? 0) });
     world = nextWorld;
     uiState.dayEvents.push(...events);
     uiState.phase = "explore";

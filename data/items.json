@@ -14,7 +14,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "👊"
   },
   "sword": {
     "id": "sword",
@@ -31,7 +32,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "⚔️"
   },
   "club": {
     "id": "club",
@@ -48,7 +50,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🪵"
   },
   "spear": {
     "id": "spear",
@@ -65,7 +68,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🗡️"
   },
   "trident": {
     "id": "trident",
@@ -82,7 +86,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🔱"
   },
   "axe": {
     "id": "axe",
@@ -100,7 +105,8 @@
     "effects": {
       "blocksByShield": false,
       "breaksShieldOnly": true
-    }
+    },
+    "icon": "🪓"
   },
   "wand": {
     "id": "wand",
@@ -117,7 +123,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🪄"
   },
   "knife": {
     "id": "knife",
@@ -134,7 +141,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🔪"
   },
   "dagger": {
     "id": "dagger",
@@ -152,7 +160,8 @@
     "effects": {
       "blocksByShield": true,
       "canCutNet": true
-    }
+    },
+    "icon": "🗡️"
   },
   "grenade": {
     "id": "grenade",
@@ -172,7 +181,8 @@
       "penetratesShield": true,
       "selfDamage": 15,
       "halfIfTargetDexHigher": true
-    }
+    },
+    "icon": "💣"
   },
   "blowgun": {
     "id": "blowgun",
@@ -191,7 +201,8 @@
       "blocksByShield": true,
       "appliesPoison": true,
       "usesPerDay": 2
-    }
+    },
+    "icon": "🎯"
   },
   "bow": {
     "id": "bow",
@@ -208,7 +219,8 @@
     },
     "effects": {
       "blocksByShield": true
-    }
+    },
+    "icon": "🏹"
   },
   "shield": {
     "id": "shield",
@@ -223,7 +235,8 @@
       "minDex": null,
       "dexGteTarget": false
     },
-    "effects": {}
+    "effects": {},
+    "icon": "🛡️"
   },
   "camouflage": {
     "id": "camouflage",
@@ -241,7 +254,8 @@
     "effects": {
       "invisibleOneDay": true,
       "nonTransferable": true
-    }
+    },
+    "icon": "🫥"
   },
   "flask": {
     "id": "flask",
@@ -259,7 +273,8 @@
     "effects": {
       "hidden": true,
       "revealOnUse": true
-    }
+    },
+    "icon": "🧪"
   },
   "backpack": {
     "id": "backpack",
@@ -276,6 +291,7 @@
     },
     "effects": {
       "opensIntoLoot": true
-    }
+    },
+    "icon": "🎒"
   }
 }

@@ -21,6 +21,7 @@ export const ItemTypes = {
  * @property {string} id
  * @property {string} type
  * @property {string} name
+ * @property {string} icon
  * @property {string} description
  * @property {number|null} damage
  * @property {number|null} uses
@@ -54,6 +55,7 @@ function _normalizeDef(raw){
     id: String(raw.id),
     type: _normalizeType(raw.type),
     name: String(raw.name || raw.id),
+    icon: String(raw.icon || ""),
     description: String(raw.description || ""),
     damage: raw.damage == null ? null : Number(raw.damage),
     uses: raw.uses == null ? null : Number(raw.uses),
@@ -99,6 +101,21 @@ export function getItemDef(id){
 export function isStackable(defId){
   const d = getItemDef(defId);
   return !!d?.stackable;
+}
+
+
+export function getItemIcon(defId){
+  const d = getItemDef(defId);
+  if(d?.icon) return String(d.icon);
+  // fallback by type
+  switch(d?.type){
+    case ItemTypes.WEAPON: return "⚔️";
+    case ItemTypes.PROTECTION: return "🛡️";
+    case ItemTypes.CONSUMABLE: return "🧪";
+    case ItemTypes.UTILITY: return "🎒";
+    case ItemTypes.TRAP: return "🪤";
+    default: return "📦";
+  }
 }
 
 export function displayDamageLabel(defId, qty = 1){
