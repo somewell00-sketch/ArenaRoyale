@@ -90,11 +90,12 @@ function drawSafeLabel(ctx, poly, label, isEmoji){
 }
 
 export class MapUI {
-  constructor({ canvas, onAreaClick, getCurrentAreaId }){
+  constructor({ canvas, onAreaClick, getCurrentAreaId, canMove }){
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.onAreaClick = onAreaClick;
     this.getCurrentAreaId = getCurrentAreaId || (() => (this.world?.entities?.player?.areaId ?? 1));
+    this.canMove = canMove || (() => true);
 
     this.hoveredId = null;
 
@@ -137,12 +138,13 @@ export class MapUI {
   handleMove(e){
     const {x,y} = this.canvasToLocal(e);
     const id = this.hitTest(x,y);
-    const nextHover = (id != null && this.isVisitable(id)) ? id : null;
+    const enabled = !!this.canMove();
+    const nextHover = (enabled && id != null && this.isVisitable(id)) ? id : null;
     if(nextHover !== this.hoveredId){
       this.hoveredId = nextHover;
       this.render();
     }
-    this.canvas.style.cursor = (id != null && this.isVisitable(id)) ? "pointer" : "default";
+    this.canvas.style.cursor = (enabled && id != null && this.isVisitable(id)) ? "pointer" : "default";
   }
 
   handleClick(e){

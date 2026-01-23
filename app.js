@@ -14,6 +14,8 @@ const uiState = {
   phase: "needs_action", // needs_action | explore
   movesUsed: 0,
   dayEvents: [],
+  selectedTarget: null,
+  leftAlert: null,
 };
 
 const MAX_MOVES_PER_DAY = 3;
@@ -124,46 +126,67 @@ function startNewGame(mapSize, totalPlayers, playerDistrict){
 function renderGame(){
   root.innerHTML = `
     <div class="app">
-      <aside class="panel">
-        <div class="h1" style="margin:0;">Arena</div>
-        <div class="muted small">Day <span id="day"></span> • Seed <span id="seed"></span></div>
-
-        <div class="section">
-          <div id="banner" class="banner">—</div>
-          <div class="row" style="margin-top:10px;">
-            <button id="mainBtn" class="btn primary" style="width:100%; padding:12px 14px;">—</button>
-          </div>
-          <div class="muted small" style="margin-top:6px;">
-            Movimentos restantes hoje: <span id="movesLeft"></span>
-          </div>
+      <!-- LEFT: gameplay (actions + entities in your current area) -->
+      <aside class="panel" id="leftPanel">
+        <div class="panelHeader">
+          <div class="h1" style="margin:0;">Arena</div>
+          <div class="muted small">Day <span id="day"></span> • Area <span id="curArea"></span></div>
         </div>
 
-        <div class="section">
-          <div class="muted">Focused area</div>
-          <div class="row" style="margin-top:6px;">
-            <span class="pill"><span class="swatch" id="swatch"></span><span id="title">—</span></span>
-            <span class="pill" id="visitedCount">Visited: —</span>
+        <div id="leftAlert" class="alert hidden">—</div>
+
+        <div id="needsAction" class="section">
+          <div class="banner">
+            You must perform an action in this area before moving to the next one.
           </div>
 
-          <div class="muted" style="margin-top:10px;">Occupants</div>
-          <div id="occupants" class="list"></div>
+          <div class="muted" style="margin-top:12px;">Players in the area</div>
+          <div id="areaPills" class="pillWrap" style="margin-top:8px;"></div>
 
-          <div class="kv">
-            <div>Area</div><div id="infoNum">—</div>
-            <div>Biome</div><div id="infoBiome">—</div>
-            <div>Water</div><div id="infoWater">—</div>
-            <div>Visited</div><div id="infoVisited">—</div>
-            <div>Phase</div><div id="infoPhase">—</div>
+          <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+            <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
+            <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
+            <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
           </div>
+
+          <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
+        </div>
+
+        <div id="exploreState" class="section hidden">
+          <div class="banner">
+            You survived another day. You may move and then end the day.
+          </div>
+          <div class="row" style="margin-top:12px;">
+            <button id="btnEndDay" class="btn green" style="width:100%; padding:12px 14px;">End Day</button>
+          </div>
+          <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft2"></span></div>
+        </div>
+      </aside>
+
+      <main class="canvasWrap">
+        <canvas id="c" width="820" height="820"></canvas>
+        <div id="areaInfo" class="areaInfo">—</div>
+        <div class="hint">Cornucopia is Area 1 • Select an area to inspect • Move only after committing an action</div>
+      </main>
+
+      <!-- RIGHT: debug only -->
+      <aside class="panel" id="rightPanel">
+        <div class="h1" style="margin:0;">Debug</div>
+        <div class="muted small">Seed <span id="seed"></span></div>
+
+        <div class="section" style="margin-top:10px;">
+          <div class="row">
+            <button id="debugAdvance" class="btn">Advance day</button>
+          </div>
+          <div class="muted small" style="margin-top:8px;">Entities (HP + area)</div>
+          <div id="debugList" class="list" style="max-height:360px; overflow:auto;"></div>
         </div>
 
         <div class="section">
           <div class="muted">Tools</div>
-          <div class="row" style="margin-top:8px;">
+          <div class="row" style="margin-top:8px; flex-wrap:wrap; gap:8px;">
             <button id="regen" class="btn">New map</button>
             <button id="restart" class="btn">Restart</button>
-          </div>
-          <div class="row" style="margin-top:8px;">
             <button id="saveLocal" class="btn">Save</button>
             <button id="export" class="btn">Export JSON</button>
             <label class="btn" style="display:inline-flex; align-items:center; gap:8px;">
@@ -172,37 +195,6 @@ function renderGame(){
             <button id="clearLocal" class="btn">Clear save</button>
           </div>
         </div>
-
-        <div class="section">
-          <div class="muted">Debug</div>
-          <div class="row" style="margin-top:8px;">
-            <button id="debugAdvance" class="btn">Advance day</button>
-          </div>
-          <div class="muted small" style="margin-top:8px;">HP e área de cada tributo</div>
-          <div id="debugList" class="list" style="max-height:240px; overflow:auto;"></div>
-        </div>
-      </aside>
-
-      <main class="canvasWrap">
-        <canvas id="c" width="820" height="820"></canvas>
-        <div class="hint">Cornucopia is Area 1 • Clique nas áreas adjacentes durante a exploração</div>
-      </main>
-
-      <aside class="panel">
-        <div class="h1" style="margin:0;">You</div>
-        <div class="muted small"><span id="youDistrict">—</span></div>
-
-        <div class="row" style="margin-top:10px;">
-          <span class="pill">HP <span id="youHP" style="font-family:var(--mono);">—</span></span>
-          <span class="pill">FP <span id="youFP" style="font-family:var(--mono);">—</span></span>
-          <span class="pill">Kills <span id="youKills" style="font-family:var(--mono);">—</span></span>
-        </div>
-
-        <div class="kv" style="margin-top:10px;">
-          <div>Visited areas</div><div id="youVisited">—</div>
-          <div>Moves/day</div><div id="youSteps">3</div>
-          <div>Inventory</div><div class="muted">Soon</div>
-        </div>
       </aside>
     </div>
   `;
@@ -210,33 +202,28 @@ function renderGame(){
   const dayEl = document.getElementById("day");
   const seedEl = document.getElementById("seed");
 
-  const bannerEl = document.getElementById("banner");
-  const mainBtn = document.getElementById("mainBtn");
+  const curAreaEl = document.getElementById("curArea");
+
+  const leftAlertEl = document.getElementById("leftAlert");
+  const needsActionEl = document.getElementById("needsAction");
+  const exploreStateEl = document.getElementById("exploreState");
   const movesLeftEl = document.getElementById("movesLeft");
-
-  const swatch = document.getElementById("swatch");
-  const title = document.getElementById("title");
-  const visitedCount = document.getElementById("visitedCount");
-  const occupantsEl = document.getElementById("occupants");
-
-  const infoNum = document.getElementById("infoNum");
-  const infoBiome = document.getElementById("infoBiome");
-  const infoWater = document.getElementById("infoWater");
-  const infoVisited = document.getElementById("infoVisited");
-  const infoPhase = document.getElementById("infoPhase");
+  const movesLeftEl2 = document.getElementById("movesLeft2");
+  const areaPillsEl = document.getElementById("areaPills");
+  const btnDefend = document.getElementById("btnDefend");
+  const btnNothing = document.getElementById("btnNothing");
+  const btnAttack = document.getElementById("btnAttack");
+  const btnEndDay = document.getElementById("btnEndDay");
 
   const debugList = document.getElementById("debugList");
 
-  const youDistrict = document.getElementById("youDistrict");
-  const youHP = document.getElementById("youHP");
-  const youFP = document.getElementById("youFP");
-  const youKills = document.getElementById("youKills");
-  const youVisited = document.getElementById("youVisited");
+  const areaInfoEl = document.getElementById("areaInfo");
 
   const canvas = document.getElementById("c");
   const mapUI = new MapUI({
     canvas,
     getCurrentAreaId: () => world?.entities?.player?.areaId ?? 1,
+    canMove: () => uiState.phase === "explore",
     onAreaClick: (id) => {
       uiState.focusedAreaId = id;
       handleAreaClick(id);
@@ -248,15 +235,24 @@ function renderGame(){
     if(!world) return;
 
     // Always allow inspecting focus. Movement only in explore.
-    if(uiState.phase !== "explore") return;
+    if(uiState.phase !== "explore"){
+      showLeftAlert("You must commit an action before moving.");
+      return;
+    }
 
     const cur = world.entities.player.areaId;
     if(id === cur) return;
 
-    if(uiState.movesUsed >= MAX_MOVES_PER_DAY) return;
+    if(uiState.movesUsed >= MAX_MOVES_PER_DAY){
+      showLeftAlert("You already moved 3 times today.");
+      return;
+    }
 
     const res = moveActorOneStep(world, "player", id);
-    if(!res.ok) return;
+    if(!res.ok){
+      showLeftAlert("You can't move there.");
+      return;
+    }
 
     uiState.movesUsed += 1;
     uiState.dayEvents.push(...res.events);
@@ -269,6 +265,60 @@ function renderGame(){
     uiState.phase = "needs_action";
     uiState.movesUsed = 0;
     uiState.dayEvents = [];
+    uiState.selectedTarget = null;
+  }
+
+  function showLeftAlert(msg){
+    uiState.leftAlert = msg;
+    if(leftAlertEl){
+      leftAlertEl.textContent = msg;
+      leftAlertEl.classList.remove("hidden");
+    }
+    setTimeout(() => {
+      // Only hide if it's still the same message
+      if(uiState.leftAlert === msg && leftAlertEl){
+        leftAlertEl.classList.add("hidden");
+      }
+    }, 2800);
+  }
+
+  function renderAreaPills(){
+    if(!areaPillsEl) return;
+
+    const p = world.entities.player;
+    const here = p.areaId;
+    const npcsHere = Object.values(world.entities.npcs || {}).filter(n => (n.hp ?? 0) > 0 && n.areaId === here);
+    const items = [
+      { id:"player", name:"You", district:p.district, selectable:false },
+      ...npcsHere.map(n => ({ id:n.id, name:n.name, district:n.district, selectable:true }))
+    ];
+
+    areaPillsEl.innerHTML = items.length ? items.map(t => {
+      const selected = uiState.selectedTarget === t.id;
+      const cls = `playerPill ${t.selectable ? "selectable" : ""} ${selected ? "selected" : ""}`;
+      return `<button class="${cls}" data-id="${escapeHtml(t.id)}" ${t.selectable ? "" : "disabled"}>
+        <span class="pillName">${escapeHtml(t.name)}</span>
+        <span class="pillSub">${escapeHtml(districtTag(t.district))}</span>
+      </button>`;
+    }).join("") : `<div class="muted small">No one here</div>`;
+
+    // wire
+    areaPillsEl.querySelectorAll(".playerPill.selectable").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-id");
+        uiState.selectedTarget = id;
+        btnAttack.classList.remove("hidden");
+        // refresh selected style
+        renderAreaPills();
+      };
+    });
+
+    // show/hide attack
+    if(uiState.selectedTarget && uiState.selectedTarget !== "player"){
+      btnAttack.classList.remove("hidden");
+    } else {
+      btnAttack.classList.add("hidden");
+    }
   }
 
   function sync(){
@@ -279,12 +329,7 @@ function renderGame(){
 
     const p = world.entities.player;
 
-    const dInfo = DISTRICT_INFO[p.district] || {};
-    youDistrict.textContent = `${districtTag(p.district)} • ${dInfo.name || ""}`;
-    youHP.textContent = String(p.hp ?? 100);
-    youFP.textContent = String(p.fp ?? 70);
-    youKills.textContent = String(p.kills ?? 0);
-    youVisited.textContent = String(world.flags.visitedAreas.length);
+    curAreaEl.textContent = String(p.areaId);
 
     // Debug panel: list all tributes with HP + area.
     if(debugList){
@@ -313,61 +358,58 @@ function renderGame(){
       debugList.innerHTML = rows.join("") || `<div class="muted small">—</div>`;
     }
 
-    visitedCount.textContent = `Visited: ${world.flags.visitedAreas.length}`;
-
     const movesLeft = Math.max(0, MAX_MOVES_PER_DAY - uiState.movesUsed);
     movesLeftEl.textContent = String(movesLeft);
+    if(movesLeftEl2) movesLeftEl2.textContent = String(movesLeft);
 
     if(uiState.phase === "needs_action"){
-      bannerEl.textContent = "Você deve fazer uma ação nesta área antes de se mover para a próxima.";
-      mainBtn.textContent = "Commit Action";
+      needsActionEl.classList.remove("hidden");
+      exploreStateEl.classList.add("hidden");
     } else {
-      bannerEl.textContent = "Você sobreviveu mais um dia. Escolha uma nova área para ir.";
-      mainBtn.textContent = "End Day";
+      needsActionEl.classList.add("hidden");
+      exploreStateEl.classList.remove("hidden");
     }
 
+    // Map overlay area info (focused area)
     const focus = uiState.focusedAreaId;
     const a = world.map.areasById[String(focus)];
     const visited = world.flags.visitedAreas.includes(focus);
+    const revealed = visited || focus === p.areaId;
+    const biome = revealed ? (a?.biome || "—") : "Unknown";
+    const water = revealed ? ((a?.hasWater) ? "Yes" : "No") : "Unknown";
+    const status = visited ? "Visited" : (revealed ? "Revealed" : "Hidden");
+    areaInfoEl.innerHTML = `
+      <div><strong>Area ${escapeHtml(String(focus))}</strong></div>
+      <div class="muted tiny">Biome: ${escapeHtml(String(biome))}</div>
+      <div class="muted tiny">Water: ${escapeHtml(String(water))}</div>
+      <div class="muted tiny">Status: ${escapeHtml(String(status))}</div>
+    `;
 
-    title.textContent = (focus === 1) ? `Area 1 (🏺 Cornucopia)` : `Area ${focus}`;
-    swatch.style.background = (visited ? (a?.color || "#2a2f3a") : "#2a2f3a");
+    // Left panel pills (current area occupants)
+    renderAreaPills();
 
-    infoNum.textContent = String(focus);
-    infoBiome.textContent = visited ? (a?.biome || "—") : "Unknown";
-    infoWater.textContent = visited ? ((a?.hasWater) ? "Yes" : "No") : "Unknown";
-    infoVisited.textContent = visited ? "Yes" : "No";
-    infoPhase.textContent = uiState.phase;
-
-    // Occupants: reveal if visited OR your current area
-    const reveal = visited || (focus === p.areaId);
-    const occ = [];
-    if(reveal){
-      if(p.areaId === focus) occ.push({ name: "You", district: p.district, id: "player" });
-      for(const npc of Object.values(world.entities.npcs)){
-        if(npc.areaId === focus && (npc.hp ?? 0) > 0) occ.push({ name: npc.name, district: npc.district, id: npc.id });
-      }
+    // Debug list (compact)
+    if(debugList){
+      const everyone = [
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0 },
+        ...Object.values(world.entities.npcs || {}).map(n => ({
+          id: n.id,
+          name: n.name,
+          district: n.district,
+          hp: n.hp ?? 100,
+          areaId: n.areaId,
+          dead: (n.hp ?? 0) <= 0,
+        }))
+      ];
+      everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
+      debugList.innerHTML = everyone.map(t => {
+        const status = t.dead ? "DEAD" : "ALIVE";
+        return `<div class="debugCard ${t.dead ? "dead" : ""}">
+          <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
+          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>${status}</span></div>
+        </div>`;
+      }).join("") || `<div class="muted small">—</div>`;
     }
-
-    occupantsEl.innerHTML = occ.length
-      ? occ.map(o => `<div class="pill"><strong>${escapeHtml(o.name)}</strong><span>${escapeHtml(districtTag(o.district))}</span></div>`).join("")
-      : `<div class="muted small">${reveal ? "No one here" : "Unknown"}</div>`;
-
-    // Debug list: all alive tributes + player.
-    const all = [
-      { id: "player", name: "You", hp: p.hp ?? 100, areaId: p.areaId, district: p.district }
-    ];
-    for(const npc of Object.values(world.entities.npcs || {})){
-      all.push({ id: npc.id, name: npc.name, hp: npc.hp ?? 100, areaId: npc.areaId, district: npc.district });
-    }
-    all.sort((a,b) => (b.hp>0)-(a.hp>0) || a.areaId-b.areaId || a.name.localeCompare(b.name));
-    debugList.innerHTML = all.map(t => {
-      const dead = (t.hp ?? 0) <= 0;
-      return `<div class="debugRow ${dead ? "dead" : ""}">
-        <div class="debugName"><strong>${escapeHtml(t.name)}</strong> <span class="muted small">${escapeHtml(districtTag(t.district))}</span></div>
-        <div class="debugMeta"><span class="pill">HP ${t.hp}</span> <span class="pill">Area ${t.areaId}</span></div>
-      </div>`;
-    }).join("");
 
     mapUI.setData({ world, paletteIndex: 0 });
     mapUI.render();
@@ -375,33 +417,65 @@ function renderGame(){
     // If player died, lock controls
     const dead = (p.hp ?? 0) <= 0;
     if(dead){
-      bannerEl.textContent = "Você morreu. Reinicie o jogo.";
-      mainBtn.disabled = true;
+      showLeftAlert("You died. Restart the game.");
+      btnDefend.disabled = true;
+      btnNothing.disabled = true;
+      btnAttack.disabled = true;
+      btnEndDay.disabled = true;
     } else {
-      mainBtn.disabled = false;
+      btnDefend.disabled = false;
+      btnNothing.disabled = false;
+      btnAttack.disabled = false;
+      btnEndDay.disabled = false;
     }
   }
 
-  mainBtn.onclick = () => {
+  // Action buttons (commit immediately)
+  btnDefend.onclick = () => {
     if(!world) return;
-
-    if(uiState.phase === "needs_action"){
-      openCommitModal();
-      return;
-    }
-
-    // End day
-    const intents = generateNpcIntents(world);
-    const ended = endDay(world, intents, uiState.dayEvents);
-    world = ended;
-
-    uiState.focusedAreaId = world.entities.player.areaId;
-    resetDayState();
-
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"DEFEND" });
+    world = nextWorld;
+    uiState.dayEvents.push(...events);
+    uiState.phase = "explore";
     saveToLocal(world);
     sync();
+    openResultDialog(events);
+  };
 
-    // Always show who ended up in your area when the day ends.
+  btnNothing.onclick = () => {
+    if(!world) return;
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"NOTHING" });
+    world = nextWorld;
+    uiState.dayEvents.push(...events);
+    uiState.phase = "explore";
+    saveToLocal(world);
+    sync();
+    openResultDialog(events);
+  };
+
+  btnAttack.onclick = () => {
+    if(!world) return;
+    if(!uiState.selectedTarget || uiState.selectedTarget === "player"){
+      showLeftAlert("Select a player to attack.");
+      return;
+    }
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"ATTACK", targetId: uiState.selectedTarget });
+    world = nextWorld;
+    uiState.dayEvents.push(...events);
+    uiState.phase = "explore";
+    saveToLocal(world);
+    sync();
+    openResultDialog(events);
+  };
+
+  btnEndDay.onclick = () => {
+    if(!world) return;
+    const intents = generateNpcIntents(world);
+    world = endDay(world, intents, uiState.dayEvents);
+    uiState.focusedAreaId = world.entities.player.areaId;
+    resetDayState();
+    saveToLocal(world);
+    sync();
     openEndDayDialog(world.log.days[world.log.days.length-1]?.events || []);
   };
 
@@ -454,82 +528,6 @@ function renderGame(){
 
   mapUI.setData({ world, paletteIndex: 0 });
   sync();
-
-  function openCommitModal(){
-    const p = world.entities.player;
-
-    const sameAreaNpcs = Object.values(world.entities.npcs).filter(n => n.areaId === p.areaId && (n.hp ?? 0) > 0);
-    const canAttack = sameAreaNpcs.length > 0;
-
-    const overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.innerHTML = `
-      <div class="modal">
-        <div class="h1" style="margin:0;">Commit Action (Day ${world.meta.day})</div>
-        <div class="muted small" style="margin-top:6px;">Escolha sua ação para hoje. Depois disso, o mapa fica ativo para você se mover (até 3 áreas adjacentes). </div>
-
-        <div class="section">
-          <div class="row">
-            <button id="aAttack" class="btn" ${canAttack ? "" : "disabled"}>Atacar</button>
-            <button id="aDefend" class="btn">Defender</button>
-            <button id="aNothing" class="btn">Nothing</button>
-          </div>
-
-          <div class="row" style="margin-top:10px; align-items:center;">
-            <label class="muted small">Alvo</label>
-            <select id="target" class="select" ${canAttack ? "" : "disabled"}>
-              ${sameAreaNpcs.map(n => `<option value="${n.id}">${escapeHtml(n.name)} (${districtTag(n.district)})</option>`).join("")}
-            </select>
-          </div>
-
-          <div class="muted small" style="margin-top:10px;">
-            ${canAttack ? "Você pode atacar alguém na sua área." : "Sem alvos válidos aqui."}
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:14px; justify-content:flex-end;">
-          <button id="close" class="btn">Close</button>
-          <button id="confirm" class="btn primary">Confirm</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    let actionKind = "NOTHING";
-
-    function setSelected(){
-      overlay.querySelectorAll("button").forEach(b => {
-        if(b.id?.startsWith("a")) b.style.outline = "";
-      });
-      const id = actionKind === "ATTACK" ? "#aAttack" : actionKind === "DEFEND" ? "#aDefend" : "#aNothing";
-      const btn = overlay.querySelector(id);
-      if(btn) btn.style.outline = "2px solid var(--accent)";
-    }
-
-    overlay.querySelector("#close").onclick = () => overlay.remove();
-    overlay.querySelector("#aAttack").onclick = () => { if(canAttack){ actionKind="ATTACK"; setSelected(); } };
-    overlay.querySelector("#aDefend").onclick = () => { actionKind="DEFEND"; setSelected(); };
-    overlay.querySelector("#aNothing").onclick = () => { actionKind="NOTHING"; setSelected(); };
-    setSelected();
-
-    overlay.querySelector("#confirm").onclick = () => {
-      const targetId = overlay.querySelector("#target")?.value || null;
-
-      const { nextWorld, events } = commitPlayerAction(world, {
-        kind: actionKind,
-        targetId: (actionKind === "ATTACK") ? targetId : null
-      });
-
-      world = nextWorld;
-      uiState.dayEvents.push(...events);
-      uiState.phase = "explore";
-      overlay.remove();
-
-      saveToLocal(world);
-      sync();
-      openResultDialog(events);
-    };
-  }
 
   function openResultDialog(events){
     const lines = formatEvents(events);
