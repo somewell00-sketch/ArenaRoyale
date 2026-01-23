@@ -276,6 +276,40 @@
     },
     "icon": "🧪"
   },
+
+  "net": {
+    "id": "net",
+    "type": "trap",
+    "name": "Net",
+    "description": "A trap that activates the next day. Captures everyone in the area except the owner and the highest Perception. Captured players are trapped for 2 days (no actions). A Dagger can cut the net, but the Dagger becomes useless.",
+    "damage": 0,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "activatesNextDay": true,
+      "trapKind": "net"
+    },
+    "icon": "🕸️"
+  },
+
+  "mine": {
+    "id": "mine",
+    "type": "trap",
+    "name": "Mine",
+    "description": "A trap that activates the next day. Deals 60 damage to the lowest Perception who enter or remain in the area (ties: all take damage). The whole arena learns there was an accident, but the area is not revealed. Death by mine drops all items on the ground (no spoils).",
+    "damage": 60,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "activatesNextDay": true,
+      "trapKind": "mine"
+    },
+    "icon": "🧨"
+  },
   "backpack": {
     "id": "backpack",
     "type": "utility",

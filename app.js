@@ -302,6 +302,8 @@ function renderGame(){
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
             <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" title="Restore 5 FP by drinking water">Drink water</button>
+            <button id="btnSetNet" class="btn purple hidden" style="flex:1; min-width:120px;" title="Set a Net trap here (activates tomorrow)">Set Net</button>
+            <button id="btnSetMine" class="btn orange hidden" style="flex:1; min-width:120px;" title="Set a Mine trap here (activates tomorrow)">Set Mine</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
             <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
           </div>
@@ -317,6 +319,17 @@ function renderGame(){
             <button id="btnEndDay" class="btn green" style="width:100%; padding:12px 14px;">End Day</button>
           </div>
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft2"></span></div>
+        </div>
+
+        <div id="trappedState" class="section hidden">
+          <div class="banner danger">
+            You are trapped in a Net. You cannot act or move for <span id="trapDays"></span> day(s).
+          </div>
+          <div class="muted" style="margin-top:10px;">You can only escape by cutting the net with a Dagger.</div>
+          <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+            <button id="btnCutNet" class="btn red hidden" style="flex:1; min-width:160px;" title="Consume 1 Dagger to escape">Cut net (Dagger)</button>
+            <button id="btnEndDayTrapped" class="btn green" style="flex:1; min-width:160px;">End Day</button>
+          </div>
         </div>
       </aside>
 
@@ -381,6 +394,8 @@ function renderGame(){
   const leftAlertEl = document.getElementById("leftAlert");
   const needsActionEl = document.getElementById("needsAction");
   const exploreStateEl = document.getElementById("exploreState");
+  const trappedStateEl = document.getElementById("trappedState");
+  const trapDaysEl = document.getElementById("trapDays");
   const movesLeftEl = document.getElementById("movesLeft");
   const movesLeftEl2 = document.getElementById("movesLeft2");
   const areaPillsEl = document.getElementById("areaPills");
@@ -389,9 +404,14 @@ function renderGame(){
   const btnDefend = document.getElementById("btnDefend");
   const btnNothing = document.getElementById("btnNothing");
   const btnDrink = document.getElementById("btnDrink");
+  const btnSetNet = document.getElementById("btnSetNet");
+  const btnSetMine = document.getElementById("btnSetMine");
   const btnAttack = document.getElementById("btnAttack");
   const btnCollect = document.getElementById("btnCollect");
   const btnEndDay = document.getElementById("btnEndDay");
+
+  const btnCutNet = document.getElementById("btnCutNet");
+  const btnEndDayTrapped = document.getElementById("btnEndDayTrapped");
 
   const debugList = document.getElementById("debugList");
 
@@ -494,6 +514,11 @@ function renderGame(){
     if(!areaPillsEl) return;
 
     const p = world.entities.player;
+
+    // If trapped by a Net, force trapped UI state.
+    if((p.trappedDays ?? 0) > 0 && (p.hp ?? 0) > 0){
+      uiState.phase = "trapped";
+    }
     const here = p.areaId;
     const npcsHere = Object.values(world.entities.npcs || {}).filter(n => (n.hp ?? 0) > 0 && n.areaId === here);
     const items = [
@@ -582,19 +607,6 @@ function renderGame(){
         uiState.selectedGroundIndex = idx;
         uiState.selectionMode = "item";
         uiState.selectedTarget = null;
-
-        // Click-to-collect: resolves immediately (counts as your action for the day).
-        if(uiState.phase === "needs_action"){
-          const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: idx });
-          world = nextWorld;
-          uiState.dayEvents.push(...events);
-          uiState.phase = "explore";
-          saveToLocal(world);
-          sync();
-          openResultDialog(events);
-          return;
-        }
-
         renderAreaPills();
         renderGroundItem();
       };
@@ -688,12 +700,19 @@ function renderGame(){
     movesLeftEl.textContent = String(movesLeft);
     if(movesLeftEl2) movesLeftEl2.textContent = String(movesLeft);
 
+    // Panel state toggles
     if(uiState.phase === "needs_action"){
       needsActionEl.classList.remove("hidden");
       exploreStateEl.classList.add("hidden");
+      if(trappedStateEl) trappedStateEl.classList.add("hidden");
+    } else if(uiState.phase === "trapped"){
+      needsActionEl.classList.add("hidden");
+      exploreStateEl.classList.add("hidden");
+      if(trappedStateEl) trappedStateEl.classList.remove("hidden");
     } else {
       needsActionEl.classList.add("hidden");
       exploreStateEl.classList.remove("hidden");
+      if(trappedStateEl) trappedStateEl.classList.add("hidden");
     }
 
     // Contextual actions for the current area
@@ -702,6 +721,29 @@ function renderGame(){
     if(btnDrink){
       if(canDrink) btnDrink.classList.remove("hidden");
       else btnDrink.classList.add("hidden");
+    }
+
+    // Trap-related actions
+    const invItems = p.inventory?.items || [];
+    const hasNet = invItems.some(it => it.defId === "net" && (it.qty || 1) > 0);
+    const hasMine = invItems.some(it => it.defId === "mine" && (it.qty || 1) > 0);
+    if(btnSetNet){
+      if(uiState.phase === "needs_action" && hasNet) btnSetNet.classList.remove("hidden");
+      else btnSetNet.classList.add("hidden");
+    }
+    if(btnSetMine){
+      if(uiState.phase === "needs_action" && hasMine) btnSetMine.classList.remove("hidden");
+      else btnSetMine.classList.add("hidden");
+    }
+
+    // Trapped UI
+    if(uiState.phase === "trapped"){
+      if(trapDaysEl) trapDaysEl.textContent = String(p.trappedDays ?? 0);
+      const hasDagger = invItems.some(it => it.defId === "dagger" && (it.qty || 1) > 0);
+      if(btnCutNet){
+        if(hasDagger) btnCutNet.classList.remove("hidden");
+        else btnCutNet.classList.add("hidden");
+      }
     }
 
     // Map overlay area info (focused area)
@@ -818,6 +860,46 @@ function renderGame(){
     openResultDialog(events);
   };
 
+  if(btnSetNet){
+    btnSetNet.onclick = () => {
+      if(!world) return;
+      const { nextWorld, events } = commitPlayerAction(world, { kind:"SET_TRAP", trapDefId:"net" });
+      world = nextWorld;
+      uiState.dayEvents.push(...events);
+      uiState.phase = "explore";
+      saveToLocal(world);
+      sync();
+      openResultDialog(events);
+    };
+  }
+
+  if(btnSetMine){
+    btnSetMine.onclick = () => {
+      if(!world) return;
+      const { nextWorld, events } = commitPlayerAction(world, { kind:"SET_TRAP", trapDefId:"mine" });
+      world = nextWorld;
+      uiState.dayEvents.push(...events);
+      uiState.phase = "explore";
+      saveToLocal(world);
+      sync();
+      openResultDialog(events);
+    };
+  }
+
+  if(btnCutNet){
+    btnCutNet.onclick = () => {
+      if(!world) return;
+      const { nextWorld, events } = commitPlayerAction(world, { kind:"CUT_NET" });
+      world = nextWorld;
+      uiState.dayEvents.push(...events);
+      // Cutting the net counts as your action for the day.
+      uiState.phase = "explore";
+      saveToLocal(world);
+      sync();
+      openResultDialog(events);
+    };
+  }
+
   btnCollect.onclick = () => {
     if(!world) return;
     if(uiState.selectionMode !== "item" || uiState.selectedGroundIndex == null){
@@ -858,6 +940,10 @@ function renderGame(){
     sync();
     openEndDayDialog(world.log.days[world.log.days.length-1]?.events || []);
   };
+
+  if(btnEndDayTrapped){
+    btnEndDayTrapped.onclick = () => btnEndDay.onclick();
+  }
 
   document.getElementById("debugAdvance").onclick = () => {
     if(!world) return;
@@ -915,6 +1001,31 @@ function renderGame(){
   function openResultDialog(events){
     const lines = formatEvents(events);
 
+    // Backpack summary (if any)
+    const bpOpen = (events || []).find(e => e.type === "BACKPACK_OPEN");
+    let backpackBlock = "";
+    if(bpOpen){
+      const contents = (events || []).filter(e => e.type === "BACKPACK_ITEM");
+      const pills = contents.map(e => {
+        const def = getItemDef(e.itemDefId);
+        const name = def ? def.name : e.itemDefId;
+        const icon = getItemIcon(e.itemDefId);
+        const qty = e.qty || 1;
+        const dropped = e.ok === false ? " • dropped" : "";
+        const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
+        return `<div class="miniPill" title="${escapeHtml(def?.description || "")}">
+          <span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>
+          <span class="pillName">${escapeHtml(name)}${stack}</span>
+          <span class="pillSub muted tiny">${escapeHtml(dropped)}</span>
+        </div>`;
+      }).join("");
+
+      backpackBlock = `
+        <div class="muted small" style="margin-top:12px;">Backpack contents</div>
+        <div class="miniPillWrap" style="margin-top:8px;">${pills || `<div class="muted small">(Empty)</div>`}</div>
+      `;
+    }
+
     const overlay = document.createElement("div");
     overlay.className = "modalOverlay";
     overlay.innerHTML = `
@@ -925,6 +1036,8 @@ function renderGame(){
         <div class="eventList">
           ${lines.length ? lines.map(l => `<div class="eventLine">${escapeHtml(l)}</div>`).join("") : `<div class="muted small">Nothing happened.</div>`}
         </div>
+
+        ${backpackBlock}
 
         <div class="row" style="margin-top:14px; justify-content:flex-end;">
           <button id="ok" class="btn primary">OK</button>
@@ -1030,6 +1143,41 @@ function renderGame(){
             else out.push("You drank water, but your FP was already full.");
           } else {
             out.push("You tried to drink water, but there was no water here.");
+          }
+          break;
+        }
+        case "TRAP_SET": {
+          if(e.ok){
+            const def = getItemDef(e.trapDefId);
+            const nm = def?.name || e.trapDefId;
+            out.push(`You set a ${nm}. It will activate on Day ${e.armedOnDay}.`);
+          } else {
+            out.push("You tried to set a trap, but it failed.");
+          }
+          break;
+        }
+        case "TRAPPED": {
+          out.push(`You are trapped for ${e.days} more day(s).`);
+          break;
+        }
+        case "CUT_NET": {
+          if(e.ok) out.push("You cut the net with a Dagger and escaped.");
+          else out.push("You tried to cut the net, but you have no Dagger.");
+          break;
+        }
+        case "NET_TRIGGER": {
+          // Area-wide event. Only show if player is in that area.
+          if(e.areaId === world?.entities?.player?.areaId){
+            if(e.caught?.length) out.push(`A Net trap caught: ${e.caught.map(npcName).join(", ")}.`);
+            else out.push("A Net trap triggered, but caught no one.");
+          }
+          break;
+        }
+        case "MINE_BLAST": {
+          if(e.injured?.length){
+            out.push(`A mine exploded somewhere in the arena. Injured: ${e.injured.map(npcName).join(", ")}.`);
+          } else {
+            out.push("A mine exploded somewhere in the arena.");
           }
           break;
         }

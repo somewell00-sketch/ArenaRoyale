@@ -209,6 +209,11 @@ textarea{
   border: 1px solid rgba(250,208,44,0.18);
 }
 
+.banner.danger{
+  background: rgba(255, 59, 59, 0.10);
+  border: 1px solid rgba(255, 59, 59, 0.35);
+}
+
 .eventList{
   margin-top: 10px;
   display: flex;
@@ -345,6 +350,16 @@ textarea{
   border-color: rgba(0, 160, 220, 0.45);
 }
 
+.btn.purple{
+  background: rgba(126, 87, 194, 0.18);
+  border-color: rgba(126, 87, 194, 0.45);
+}
+
+.btn.orange{
+  background: rgba(251, 140, 0, 0.18);
+  border-color: rgba(251, 140, 0, 0.45);
+}
+
 .btn.ghost{
   background: transparent;
   border-style: dashed;
@@ -354,6 +369,27 @@ textarea{
   display:flex;
   flex-wrap:wrap;
   gap:8px;
+}
+
+.miniPillWrap{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+}
+
+.miniPill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+.miniPill .pillIcon{
+  font-size: 14px;
+  line-height: 1;
 }
 
 .playerPill{

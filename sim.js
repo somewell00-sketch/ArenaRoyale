@@ -22,6 +22,7 @@ export function isAdjacent(world, fromId, toId){
 export function maxSteps(entity){
   const hp = entity.hp ?? 100;
   const fp = entity.fp ?? 70;
+  if((entity.trappedDays ?? 0) > 0) return 0;
   return (hp > 30 && fp > 20) ? 3 : 1;
 }
 
@@ -76,6 +77,104 @@ function initiativeScore(seed, day, actorId){
 
 function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
+}
+
+function dropAllItemsToGround(victim, area){
+  const items = Array.isArray(victim?.inventory?.items) ? victim.inventory.items : [];
+  if(!items.length) return;
+  area.groundItems = Array.isArray(area.groundItems) ? area.groundItems : [];
+  for(const it of items){
+    // Drop unequipped copies too; keep instance shape.
+    area.groundItems.push({ defId: it.defId, qty: it.qty || 1, meta: it.meta || {}, usesLeft: it.usesLeft ?? null });
+  }
+  victim.inventory.items = [];
+  victim.inventory.equipped = { weaponDefId: null, defenseDefId: null };
+}
+
+function ensureAreaTrapList(area){
+  area.traps = Array.isArray(area.traps) ? area.traps : [];
+  return area.traps;
+}
+
+function applyTrapsAtStartOfDay(world, events, { day }){
+  // Traps activate only starting the day after being set.
+  for(const area of Object.values(world.map.areasById || {})){
+    const traps = Array.isArray(area.traps) ? area.traps : [];
+    if(!traps.length) continue;
+
+    // Gather alive actors in this area.
+    const actorsHere = [];
+    const player = world.entities.player;
+    if((player.hp ?? 0) > 0 && player.areaId === area.id) actorsHere.push(player);
+    for(const npc of Object.values(world.entities.npcs || {})){
+      if((npc.hp ?? 0) <= 0) continue;
+      if(npc.areaId === area.id) actorsHere.push(npc);
+    }
+    if(!actorsHere.length) continue;
+
+    // Process each trap; single-use traps are removed once triggered.
+    const remaining = [];
+    for(const t of traps){
+      if(!t || !t.defId) continue;
+      if(Number(t.armedOnDay) > Number(day)){
+        remaining.push(t);
+        continue;
+      }
+
+      if(t.kind === "net"){
+        const ownerId = t.ownerId;
+        const candidates = actorsHere.filter(a => a.id !== ownerId);
+        if(!candidates.length){
+          // Still consume the trap once armed.
+          events.push({ type:"NET_TRIGGER", areaId: area.id, caught: [], spared: [] });
+          continue;
+        }
+
+        const maxP = Math.max(...candidates.map(a => a.attrs?.P ?? 0));
+        const spared = candidates.filter(a => (a.attrs?.P ?? 0) === maxP).map(a => a.id);
+        const caughtActors = candidates.filter(a => (a.attrs?.P ?? 0) < maxP);
+
+        // Apply capture (2 days) to everyone except owner + highest perception.
+        for(const a of caughtActors){
+          a.trappedDays = Math.max(a.trappedDays ?? 0, 2);
+          events.push({ type:"NET_CAUGHT", who: a.id, areaId: area.id, days: 2 });
+        }
+        events.push({ type:"NET_TRIGGER", areaId: area.id, caught: caughtActors.map(a => a.id), spared });
+        continue;
+      }
+
+      if(t.kind === "mine"){
+        const ownerId = t.ownerId;
+        const candidates = actorsHere.filter(a => a.id !== ownerId);
+        if(!candidates.length){
+          events.push({ type:"MINE_BLAST", injured: [], dead: [] });
+          continue;
+        }
+
+        const minP = Math.min(...candidates.map(a => a.attrs?.P ?? 0));
+        const victims = candidates.filter(a => (a.attrs?.P ?? 0) === minP);
+
+        const injured = [];
+        const dead = [];
+        for(const v of victims){
+          applyDamage(v, 60);
+          injured.push(v.id);
+          events.push({ type:"MINE_HIT", who: v.id, dmg: 60 });
+          if((v.hp ?? 0) <= 0){
+            dead.push(v.id);
+            // Death by mine: drop all items on the ground, no spoils.
+            dropAllItemsToGround(v, area);
+            events.push({ type:"DEATH", who: v.id, areaId: area.id, reason:"mine" });
+          }
+        }
+
+        // Whole arena learns there was an accident, but not the area.
+        events.push({ type:"MINE_BLAST", injured, dead });
+        continue;
+      }
+    }
+    area.traps = remaining;
+  }
 }
 
 function openBackpackIntoInventory(world, owner, area, backpackInstance, events, { seed, day }){
@@ -136,6 +235,16 @@ export function commitPlayerAction(world, action){
   if((player.hp ?? 0) <= 0){
     events.push({ type:"NO_ACTION", reason:"player_dead" });
     return { nextWorld: next, events };
+  }
+
+  // If trapped by a Net, the player cannot take normal actions or move.
+  // The only allowed escape is cutting the net using a Dagger.
+  if((player.trappedDays ?? 0) > 0){
+    const kind = action?.kind || "NOTHING";
+    if(kind !== "CUT_NET"){
+      events.push({ type:"TRAPPED", days: player.trappedDays, areaId: player.areaId });
+      return { nextWorld: next, events };
+    }
   }
 
   // reset one-day combat flags (preserve hunger/other day state)
@@ -288,6 +397,46 @@ export function commitPlayerAction(world, action){
     }
 
     events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id });
+    return { nextWorld: next, events };
+  }
+
+  if(kind === "SET_TRAP"){
+    const trapDefId = action?.trapDefId;
+    const def = trapDefId ? getItemDef(trapDefId) : null;
+    if(!def || def.type !== "trap"){
+      events.push({ type:"TRAP_SET", ok:false, reason:"invalid_trap" });
+      return { nextWorld: next, events };
+    }
+    // Consume one trap item from inventory.
+    const rem = removeInventoryItem(player.inventory, trapDefId, 1);
+    if(!rem.ok){
+      events.push({ type:"TRAP_SET", ok:false, reason:"missing_item", trapDefId });
+      return { nextWorld: next, events };
+    }
+
+    const area = next.map.areasById[String(player.areaId)];
+    if(!area){
+      events.push({ type:"TRAP_SET", ok:false, reason:"missing_area", trapDefId });
+      return { nextWorld: next, events };
+    }
+
+    const traps = ensureAreaTrapList(area);
+    const kind = def.effects?.trapKind || trapDefId;
+    traps.push({ defId: trapDefId, kind, ownerId: "player", armedOnDay: day + 1 });
+    events.push({ type:"TRAP_SET", ok:true, trapDefId, areaId: player.areaId, armedOnDay: day + 1 });
+    return { nextWorld: next, events };
+  }
+
+  if(kind === "CUT_NET"){
+    // Use one Dagger to escape. The Dagger becomes useless (we remove it).
+    const hasDagger = (player.inventory?.items || []).some(it => it.defId === "dagger" && (it.qty || 1) > 0);
+    if(!hasDagger){
+      events.push({ type:"CUT_NET", ok:false, reason:"no_dagger" });
+      return { nextWorld: next, events };
+    }
+    removeInventoryItem(player.inventory, "dagger", 1);
+    player.trappedDays = 0;
+    events.push({ type:"CUT_NET", ok:true, areaId: player.areaId });
     return { nextWorld: next, events };
   }
 
@@ -529,6 +678,11 @@ export function moveActorOneStep(world, who, toAreaId){
 
   if((entity.hp ?? 0) <= 0) return { ok:false, events };
 
+  if((entity.trappedDays ?? 0) > 0){
+    events.push({ type:"MOVE_BLOCKED", who, from: entity.areaId, to: Number(toAreaId), reason:"trapped" });
+    return { ok:false, events };
+  }
+
   const from = entity.areaId;
   const to = Number(toAreaId);
 
@@ -643,6 +797,10 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
   }
 }
 
+  // Apply traps (Net / Mine) now that the new day has begun.
+  // Traps only activate starting the day after they were set.
+  applyTrapsAtStartOfDay(next, events, { day: next.meta.day });
+
   // --- 6.2 Spoils after a kill ---
   // Loot is distributed among participants (who dealt damage / were in the dispute)
   // ordered by Dexterity (tie-breaker: initiative).
@@ -668,6 +826,15 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
   // This timing is important for the "red border one day before" UI.
   next.meta.day += 1;
   applyClosuresForDay(next, next.meta.day);
+
+  // Decrement Net trap imprisonment counters as the new day begins.
+  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
+    if((e.hp ?? 0) <= 0) continue;
+    if((e.trappedDays ?? 0) > 0){
+      e.trappedDays = Math.max(0, Number(e.trappedDays) - 1);
+      if(e.trappedDays === 0) events.push({ type:"NET_RELEASE", who: e.id, areaId: e.areaId });
+    }
+  }
 
 
 // At the start of the new day:
