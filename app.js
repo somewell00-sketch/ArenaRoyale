@@ -651,8 +651,19 @@ function renderGame(){
     uiState.movesUsed += 1;
     uiState.dayEvents.push(...res.events);
 
+    // Auto end the day once the 3rd move is taken.
+    // This feels more natural than requiring an extra click.
+    if(uiState.movesUsed >= MAX_MOVES_PER_DAY){
+      // If the move killed the player (e.g., creature on enter), do not auto-end.
+      if((world.entities.player.hp ?? 0) > 0){
+        performEndDay();
+        return;
+      }
+    }
+
     // reveal the destination immediately (spec: unlocking/revealing on click)
     saveToLocal(world);
+    sync();
   }
 
   function resetDayState(){
@@ -1120,7 +1131,7 @@ function renderGame(){
     openResultDialog(events);
   };
 
-  btnEndDay.onclick = () => {
+  function performEndDay(){
     if(!world) return;
     const intents = generateNpcIntents(world);
     world = endDay(world, intents, uiState.dayEvents);
@@ -1129,6 +1140,10 @@ function renderGame(){
     saveToLocal(world);
     sync();
     openEndDayDialog(world.log.days[world.log.days.length-1]?.events || []);
+  }
+
+  btnEndDay.onclick = () => {
+    performEndDay();
   };
 
   if(btnEndDayTrapped){
@@ -1288,6 +1303,16 @@ function renderGame(){
     const nonQuietNote = notes.find(n => n !== "quiet_day");
     if(nonQuietNote) return true;
 
+    // Only show a popup for NOTHING if something affected *you*.
+    const affectsPlayer = (e) => {
+      if(!e) return false;
+      const who = e.who ?? null;
+      const target = e.target ?? e.targetId ?? null;
+      if(who === "player") return true;
+      if(target === "player") return true;
+      return false;
+    };
+
     const meaningfulTypes = new Set([
       "DAMAGE_RECEIVED",
       "DEATH",
@@ -1297,9 +1322,12 @@ function renderGame(){
       "SHIELD_BLOCK",
       "SHIELD_BROKEN",
       "FLASK_REVEAL",
-      "HEAL"
+      "HEAL",
+      "DRINK",
+      "EAT",
+      "STARVING"
     ]);
-    return (events || []).some(e => meaningfulTypes.has(e.type));
+    return (events || []).some(e => meaningfulTypes.has(e.type) && affectsPlayer(e));
   }
 
   function formatEvents(events){

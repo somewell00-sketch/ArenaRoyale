@@ -272,6 +272,20 @@ function applyOnCollect(world, collector, area, itemInst, events){
         events.push({ type:"HEAL", who: collector.id, by: "resource", amount: amt, itemDefId: def.id, areaId: area.id });
       }
     }
+
+    // Restore FP (food/energy)
+    if(def.effects?.healFP){
+      const amt = Number(def.effects.healFP) || 0;
+      if(amt > 0){
+        const before = Number(collector.fp ?? 70);
+        collector.fp = Math.min(70, before + amt);
+        // Counts as "feeding" for starvation prevention.
+        collector._today = collector._today || {};
+        collector._today.mustFeed = false;
+        collector._today.fed = true;
+        events.push({ type:"EAT", who: collector.id, areaId: area.id, amount: amt, itemDefId: def.id });
+      }
+    }
     // Cure poison
     if(def.effects?.curePoison){
       const hadPoison = (collector.status || []).some(s => s?.type === "poison");
