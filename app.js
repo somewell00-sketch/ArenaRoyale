@@ -240,6 +240,7 @@ function renderStart(){
     uiState.phase = "needs_action";
     uiState.movesUsed = 0;
     uiState.dayEvents = [];
+    uiState.deathDialogShown = false;
     renderGame();
   };
 
@@ -265,6 +266,8 @@ function startNewGame(mapSize, totalPlayers, playerDistrict, playerAttrs){
   uiState.phase = "needs_action";
   uiState.movesUsed = 0;
   uiState.dayEvents = [];
+  // Allow the death dialog to appear again after restarting.
+  uiState.deathDialogShown = false;
 
   saveToLocal(world);
   renderGame();
@@ -925,6 +928,7 @@ function renderGame(){
     overlay.querySelector("#restartGame").onclick = () => {
       clearLocal();
       world = null;
+      uiState.deathDialogShown = false;
       overlay.remove();
       renderStart();
     };
