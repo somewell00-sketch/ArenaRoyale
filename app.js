@@ -49,25 +49,33 @@ function renderStart(){
         <hr class="sep" />
 
         <div class="h2" style="margin:0 0 6px 0;">Atributos do seu jogador (7 pontos)</div>
-        <div class="muted small" style="margin-bottom:8px;">Distribua entre Força (iniciativa), Destreza (itens) e Percepção (ameaças). Sem negativos. Precisa somar 7.</div>
+        <div class="muted small" style="margin-bottom:10px;">Distribua entre Força (iniciativa), Destreza (itens) e Percepção (ameaças). Sem negativos. Precisa somar 7.</div>
 
-        <div class="row" style="gap:10px; align-items:flex-end;">
-          <div style="flex:1; min-width:120px;">
-            <label class="muted small">Força</label>
-            <input id="attrF" class="input" type="number" min="0" max="7" value="3" />
+        <div class="attrGrid">
+          <div class="attrCol">
+            <div class="muted small">Força</div>
+            <div class="attrValue"><span id="attrFVal">3</span></div>
+            <input id="attrF" class="vSlider" type="range" min="0" max="7" step="1" value="3" />
+            <div class="muted small">0 — 7</div>
           </div>
-          <div style="flex:1; min-width:120px;">
-            <label class="muted small">Destreza</label>
-            <input id="attrD" class="input" type="number" min="0" max="7" value="2" />
+          <div class="attrCol">
+            <div class="muted small">Destreza</div>
+            <div class="attrValue"><span id="attrDVal">2</span></div>
+            <input id="attrD" class="vSlider" type="range" min="0" max="7" step="1" value="2" />
+            <div class="muted small">0 — 7</div>
           </div>
-          <div style="flex:1; min-width:120px;">
-            <label class="muted small">Percepção</label>
-            <input id="attrP" class="input" type="number" min="0" max="7" value="2" />
+          <div class="attrCol">
+            <div class="muted small">Percepção</div>
+            <div class="attrValue"><span id="attrPVal">2</span></div>
+            <input id="attrP" class="vSlider" type="range" min="0" max="7" step="1" value="2" />
+            <div class="muted small">0 — 7</div>
           </div>
-          <div style="min-width:160px;">
+
+          <div class="attrSummary">
             <div class="muted small">Total</div>
             <div id="attrTotal" class="h2" style="margin:0;">7 / 7</div>
             <div id="attrHint" class="muted small">—</div>
+            <div class="muted small" style="margin-top:10px;">Dica: quando o total estiver em 7, você só consegue aumentar um atributo se reduzir outro.</div>
           </div>
         </div>
 
@@ -106,23 +114,47 @@ function renderStart(){
   const elF = document.getElementById("attrF");
   const elD = document.getElementById("attrD");
   const elP = document.getElementById("attrP");
+  const elFVal = document.getElementById("attrFVal");
+  const elDVal = document.getElementById("attrDVal");
+  const elPVal = document.getElementById("attrPVal");
   const totalEl = document.getElementById("attrTotal");
   const hintEl = document.getElementById("attrHint");
   const enterBtn = document.getElementById("enter");
 
-  function clampInput(el){
-    const v = Number(el.value);
-    if(!Number.isFinite(v)) el.value = 0;
-    el.value = Math.max(0, Math.min(7, Math.floor(Number(el.value) || 0)));
+  // Sliders can never exceed a total of 7.
+  // If the user tries to increase a slider beyond the available remaining points,
+  // we automatically clamp the changed slider back down.
+  const lastValid = {
+    F: Number(elF.value) || 0,
+    D: Number(elD.value) || 0,
+    P: Number(elP.value) || 0,
+  };
+
+  function readVals(){
+    return {
+      F: Number(elF.value) || 0,
+      D: Number(elD.value) || 0,
+      P: Number(elP.value) || 0,
+    };
+  }
+
+  function writeVals(v){
+    elF.value = String(v.F);
+    elD.value = String(v.D);
+    elP.value = String(v.P);
+  }
+
+  function updateLabels(v){
+    elFVal.textContent = String(v.F);
+    elDVal.textContent = String(v.D);
+    elPVal.textContent = String(v.P);
   }
 
   function updateAttrsUI(){
-    clampInput(elF); clampInput(elD); clampInput(elP);
-    const F = Number(elF.value) || 0;
-    const D = Number(elD.value) || 0;
-    const P = Number(elP.value) || 0;
-    const sum = F + D + P;
+    const v = readVals();
+    let sum = v.F + v.D + v.P;
     totalEl.textContent = `${sum} / 7`;
+
     if(sum === 7){
       hintEl.textContent = "OK";
       enterBtn.disabled = false;
@@ -131,12 +163,36 @@ function renderStart(){
       hintEl.textContent = diff > 0 ? `Faltam ${diff} ponto(s)` : `Remova ${Math.abs(diff)} ponto(s)`;
       enterBtn.disabled = true;
     }
+    updateLabels(v);
   }
 
-  [elF, elD, elP].forEach(el => {
-    el.addEventListener("input", updateAttrsUI);
-    el.addEventListener("change", updateAttrsUI);
-  });
+  function onSliderInput(which){
+    // Keep everything as ints 0..7
+    const v = {
+      F: Math.max(0, Math.min(7, Math.round(Number(elF.value) || 0))),
+      D: Math.max(0, Math.min(7, Math.round(Number(elD.value) || 0))),
+      P: Math.max(0, Math.min(7, Math.round(Number(elP.value) || 0))),
+    };
+
+    let sum = v.F + v.D + v.P;
+    if(sum > 7){
+      const overflow = sum - 7;
+      // Reduce ONLY the slider the user is currently changing.
+      v[which] = Math.max(0, v[which] - overflow);
+      writeVals(v);
+      sum = v.F + v.D + v.P;
+    }
+
+    // Store last valid state (sum <= 7 always holds here).
+    lastValid.F = v.F; lastValid.D = v.D; lastValid.P = v.P;
+    updateAttrsUI();
+  }
+
+  elF.addEventListener("input", () => onSliderInput("F"));
+  elD.addEventListener("input", () => onSliderInput("D"));
+  elP.addEventListener("input", () => onSliderInput("P"));
+  // On change, ensure it snaps to an integer and stays consistent.
+  [elF, elD, elP].forEach(el => el.addEventListener("change", () => updateAttrsUI()));
   updateAttrsUI();
 
   enterBtn.onclick = () => {
