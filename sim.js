@@ -221,6 +221,19 @@ export function commitPlayerAction(world, action){
     return { nextWorld: next, events };
   }
 
+  if(kind === "DRINK"){
+    const area = next.map?.areasById?.[String(player.areaId)];
+    if(!area?.hasWater){
+      events.push({ type:"DRINK", ok:false, reason:"no_water" });
+      return { nextWorld: next, events };
+    }
+    const before = Number(player.fp ?? 70);
+    player.fp = Math.min(70, before + 5);
+    const gained = Math.max(0, player.fp - before);
+    events.push({ type:"DRINK", ok:true, gained, fp: player.fp, areaId: player.areaId });
+    return { nextWorld: next, events };
+  }
+
   if(kind === "ATTACK"){
     const targetId = action?.targetId || null;
     const target = targetId ? actorById(next, targetId) : null;

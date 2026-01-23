@@ -301,6 +301,7 @@ function renderGame(){
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
+            <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" title="Restore 5 FP by drinking water">Drink water</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
             <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
           </div>
@@ -387,6 +388,7 @@ function renderGame(){
   const groundItemPills = document.getElementById("groundItemPills");
   const btnDefend = document.getElementById("btnDefend");
   const btnNothing = document.getElementById("btnNothing");
+  const btnDrink = document.getElementById("btnDrink");
   const btnAttack = document.getElementById("btnAttack");
   const btnCollect = document.getElementById("btnCollect");
   const btnEndDay = document.getElementById("btnEndDay");
@@ -681,6 +683,14 @@ function renderGame(){
       exploreStateEl.classList.remove("hidden");
     }
 
+    // Contextual actions for the current area
+    const curArea = world.map.areasById[String(p.areaId)];
+    const canDrink = uiState.phase === "needs_action" && !!curArea?.hasWater;
+    if(btnDrink){
+      if(canDrink) btnDrink.classList.remove("hidden");
+      else btnDrink.classList.add("hidden");
+    }
+
     // Map overlay area info (focused area)
     const focus = uiState.focusedAreaId;
     const a = world.map.areasById[String(focus)];
@@ -739,12 +749,14 @@ function renderGame(){
       openDeathDialog({ reason });
       btnDefend.disabled = true;
       btnNothing.disabled = true;
+      if(btnDrink) btnDrink.disabled = true;
       btnAttack.disabled = true;
       btnCollect.disabled = true;
       btnEndDay.disabled = true;
     } else {
       btnDefend.disabled = false;
       btnNothing.disabled = false;
+      if(btnDrink) btnDrink.disabled = false;
       btnAttack.disabled = false;
       // Collect availability handled in renderGroundItem()
       btnEndDay.disabled = false;
@@ -773,6 +785,23 @@ function renderGame(){
     saveToLocal(world);
     sync();
     if(shouldShowActionResult(kind, events)) openResultDialog(events);
+  };
+
+  btnDrink.onclick = () => {
+    if(!world) return;
+    const p = world.entities.player;
+    const a = world.map.areasById[String(p.areaId)];
+    if(!a?.hasWater){
+      showLeftAlert("There is no water here.");
+      return;
+    }
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"DRINK" });
+    world = nextWorld;
+    uiState.dayEvents.push(...events);
+    uiState.phase = "explore";
+    saveToLocal(world);
+    sync();
+    openResultDialog(events);
   };
 
   btnCollect.onclick = () => {
@@ -979,6 +1008,15 @@ function renderGame(){
         }
         case "DEFEND": {
           out.push(e.with ? `You defended with ${e.with}.` : "You defended.");
+          break;
+        }
+        case "DRINK": {
+          if(e.ok){
+            if((e.gained || 0) > 0) out.push(`You drank water and restored ${e.gained} FP.`);
+            else out.push("You drank water, but your FP was already full.");
+          } else {
+            out.push("You tried to drink water, but there was no water here.");
+          }
           break;
         }
         case "NOTHING": {

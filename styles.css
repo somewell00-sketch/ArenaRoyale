@@ -340,6 +340,11 @@ textarea{
   border-color: rgba(0, 200, 180, 0.45);
 }
 
+.btn.teal{
+  background: rgba(0, 160, 220, 0.18);
+  border-color: rgba(0, 160, 220, 0.45);
+}
+
 .btn.ghost{
   background: transparent;
   border-style: dashed;
