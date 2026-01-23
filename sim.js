@@ -90,8 +90,10 @@ export function commitPlayerAction(world, action){
     return { nextWorld: next, events };
   }
 
-  // reset one-day flags
-  player._today = { defendedWithShield: false, invisible: false };
+  // reset one-day combat flags (preserve hunger/other day state)
+  player._today = player._today || {};
+  player._today.defendedWithShield = false;
+  player._today.invisible = false;
 
   const kind = action?.kind || "NOTHING";
 
@@ -230,6 +232,10 @@ export function commitPlayerAction(world, action){
     const before = Number(player.fp ?? 70);
     player.fp = Math.min(70, before + 5);
     const gained = Math.max(0, player.fp - before);
+    // Drinking counts as feeding for starvation rules
+    player._today = player._today || {};
+    player._today.fed = true;
+    player._today.mustFeed = false;
     events.push({ type:"DRINK", ok:true, gained, fp: player.fp, areaId: player.areaId });
     return { nextWorld: next, events };
   }
@@ -518,6 +524,19 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     }
   }
 
+
+
+// --- Starvation rule (7.1) ---
+// If an actor started this day at 0 FP (mustFeed=true) and ends the day without gaining FP, they die.
+for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
+  if((e.hp ?? 0) <= 0) continue;
+  const mustFeed = !!e._today?.mustFeed && (e._today?.day === day);
+  if(mustFeed && (Number(e.fp ?? 0) <= 0)){
+    e.hp = 0;
+    events.push({ type:"DEATH", who: e.id, areaId: e.areaId, reason:"starvation" });
+  }
+}
+
   // --- 6.2 Spoils after a kill ---
   // Loot is distributed among participants (who dealt damage / were in the dispute)
   // ordered by Dexterity (tie-breaker: initiative).
@@ -533,7 +552,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   //  - If someone starts a day at 0 FP and doesn't eat that day, they die
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
-    e.fp = Math.max(0, (e.fp ?? 70) - 10);
+        e.fp = Math.max(0, Number(e.fp ?? 70) - 10);
   }
 
   // Advance to the next day first, then apply area closures/scheduling so that
@@ -544,21 +563,37 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   next.meta.day += 1;
   applyClosuresForDay(next, next.meta.day);
 
-  // At the start of the new day: auto-eat in areas with food; otherwise starvation check.
-  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
-    if((e.hp ?? 0) <= 0) continue;
-    const a = next.map.areasById[String(e.areaId)];
-    const hasFood = !!a?.hasFood;
-    if(hasFood){
-      if((e.fp ?? 0) < 70) events.push({ type:"EAT", who: e.id, areaId: e.areaId });
-      e.fp = 70;
-    } else {
-      if((e.fp ?? 0) <= 0){
-        e.hp = 0;
-        events.push({ type:"DEATH", who: e.id, areaId: e.areaId, reason:"starvation" });
-      }
+
+// At the start of the new day:
+// - reset per-day flags
+// - auto-eat in areas with food (restores FP to 70)
+// - if FP is 0 and there is no food, mark "mustFeed" for this day (death checked at endDay)
+for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
+  if((e.hp ?? 0) <= 0) continue;
+
+  e._today = e._today || {};
+  e._today.day = next.meta.day;
+  e._today.fed = false;
+  e._today.mustFeed = false;
+  e._today.defendedWithShield = false;
+  e._today.invisible = false;
+
+  const a = next.map.areasById[String(e.areaId)];
+  const hasFood = !!a?.hasFood;
+
+  if(hasFood){
+    if((Number(e.fp ?? 0)) < 70) events.push({ type:"EAT", who: e.id, areaId: e.areaId });
+    e.fp = 70;
+    e._today.fed = true;
+  } else {
+    if(Number(e.fp ?? 0) <= 0){
+      // They must gain FP sometime during this day (drink/eat/consumable) or they'll die at day end.
+      e._today.mustFeed = true;
+      events.push({ type:"STARVING", who: e.id, areaId: e.areaId });
     }
   }
+}
+
 
   // If the player's current area is closed after day advancement, the player dies.
   // This ensures "standing on a vanished area" is treated as an instant death.
