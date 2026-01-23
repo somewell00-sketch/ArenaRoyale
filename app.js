@@ -288,6 +288,20 @@ function renderStart(){
     };
   }
 
+  function renderInvPills(inv){
+    const items = Array.isArray(inv?.items) ? inv.items : [];
+    if(!items.length) return `<span class="muted tiny">(empty)</span>`;
+    return items.slice(0, 7).map(it => {
+      const defId = it.defId;
+      const def = getItemDef(defId);
+      const icon = getItemIcon(defId);
+      const qty = Number(it.qty || 1);
+      const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
+      const title = escapeHtml(def?.description || "");
+      return `<span class="debugItemPill" title="${title}"><span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>${escapeHtml(def?.name || defId)}${stack}</span>`;
+    }).join("");
+  }
+
   function writeVals(v){
     elF.value = String(v.F);
     elD.value = String(v.D);
@@ -651,6 +665,12 @@ function renderGame(){
     uiState.movesUsed += 1;
     uiState.dayEvents.push(...res.events);
 
+    // If something immediate happened on entering (e.g., creature attack), show it now.
+    const immediate = (res.events || []).some(e => (e.who === "player") && (e.type === "CREATURE_ATTACK" || e.type === "POISON_APPLIED" || e.type === "DEATH"));
+    if(immediate){
+      openResultDialog(res.events || []);
+    }
+
     // Auto end the day once the 3rd move is taken.
     // This feels more natural than requiring an extra click.
     if(uiState.movesUsed >= MAX_MOVES_PER_DAY){
@@ -968,7 +988,7 @@ function renderGame(){
     // Debug list (compact)
     if(debugList){
       const everyone = [
-        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 70, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs },
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 70, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs, inv: p.inventory },
         ...Object.values(world.entities.npcs || {}).map(n => ({
           id: n.id,
           name: n.name,
@@ -978,6 +998,7 @@ function renderGame(){
           areaId: n.areaId,
           dead: (n.hp ?? 0) <= 0,
           attrs: n.attrs,
+          inv: n.inventory,
         }))
       ];
       everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
@@ -986,9 +1007,11 @@ function renderGame(){
         const F = t.attrs?.F ?? 0;
         const D = t.attrs?.D ?? 0;
         const P = t.attrs?.P ?? 0;
+        const invHtml = renderInvPills(t.inv);
         return `<div class="debugCard ${t.dead ? "dead" : ""}">
           <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
           <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 70))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>${status}</span></div>
+          <div class="debugInv">${invHtml}</div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
     }
@@ -1396,6 +1419,14 @@ function renderGame(){
             out.push(`A mine exploded somewhere in the arena. Injured: ${e.injured.map(npcName).join(", ")}.`);
           } else {
             out.push("A mine exploded somewhere in the arena.");
+          }
+          break;
+        }
+        case "CREATURE_ATTACK": {
+          if(e.who === "player"){
+            out.push(`${e.creature} attacked you. You lost ${e.dmg} HP.`);
+          } else {
+            out.push(`${e.creature} attacked ${npcName(e.who)}.`);
           }
           break;
         }

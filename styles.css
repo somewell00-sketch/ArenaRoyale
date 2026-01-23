@@ -521,3 +521,22 @@ textarea{
 
 .debugTop{ display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
 .debugBottom{ display:flex; justify-content:space-between; gap:10px; font-family: var(--mono); font-size: 11px; color: rgba(240,240,242,0.85); }
+
+.debugInv{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.debugItemPill{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  font-size: 11px;
+  line-height: 1;
+  color: rgba(240,240,242,0.90);
+}

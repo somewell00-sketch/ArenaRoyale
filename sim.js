@@ -101,6 +101,69 @@ function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
 }
 
+function applyCreatureAttackOnEnter(world, area, target, events, { seed, day }){
+  if(!area || !target || (target.hp ?? 0) <= 0) return;
+  const creatures = (area.activeElements || []).filter(e => e?.kind === "creature");
+  if(!creatures.length) return;
+
+  // Deterministic choice of which creature attacks.
+  const idx = Math.floor(prng(seed + 17, day, `enter_cre_${area.id}_${target.id}`) * creatures.length);
+  const creature = creatures[idx] || creatures[0];
+  const name = creature.modifier ? `${creature.modifier} ${creature.name}` : creature.name;
+
+  let dmg = Number(creature.dmgMin ?? 8) + Math.floor(prng(seed, day, `enter_dmg_${area.id}_${target.id}`) * (Number(creature.dmgMax ?? 18) - Number(creature.dmgMin ?? 8) + 1));
+  if(creature.modifierType === "damage_add") dmg += Number(creature.modifierValue) || 0;
+  if(creature.modifierType === "damage_mul") dmg = Math.floor(dmg * (Number(creature.modifierValue) || 1));
+  dmg = Math.max(0, dmg);
+
+  applyDamage(target, dmg);
+  events.push({ type:"CREATURE_ATTACK", who: target.id, areaId: area.id, creature: name, dmg });
+
+  if(creature.modifierType === "poison"){
+    target.status = target.status || [];
+    if(!(target.status || []).some(s => s?.type === "poison")){
+      target.status.push({ type:"poison", perDay: 10, by:"creature" });
+      events.push({ type:"POISON_APPLIED", who: target.id, by:"creature" });
+    }
+  }
+
+  if((target.hp ?? 0) <= 0){
+    events.push({ type:"DEATH", who: target.id, areaId: target.areaId, reason:"creature" });
+  }
+}
+
+function tryAddWithNpcAutoDiscard(actor, inst, events, { areaId } = {}){
+  // Player uses explicit discard UI. NPCs can auto-discard their worst item.
+  const isPlayer = actor?.id === "player";
+  if(isPlayer) return addToInventory(actor.inventory, inst);
+
+  let ok = addToInventory(actor.inventory, inst);
+  if(ok.ok) return ok;
+  if(ok.reason !== "inventory_full") return ok;
+
+  const items = Array.isArray(actor.inventory?.items) ? actor.inventory.items : [];
+  if(items.length === 0) return ok;
+
+  // Discard lowest-value item (deterministic by list order).
+  let worstIdx = -1;
+  let worstScore = Infinity;
+  for(let i=0;i<items.length;i++){
+    const def = getItemDef(items[i]?.defId);
+    const score = (def?.type === ItemTypes.WEAPON) ? (1 - ((def.damage ?? 0) / 120))
+      : (def?.type === ItemTypes.PROTECTION) ? 0.35
+      : (def?.type === ItemTypes.CONSUMABLE) ? 0.55
+      : 0.75;
+    if(score < worstScore){ worstScore = score; worstIdx = i; }
+  }
+  if(worstIdx >= 0){
+    const removed = items.splice(worstIdx, 1)[0];
+    events.push({ type:"ITEM_DISCARDED", who: actor.id, itemDefId: removed?.defId, qty: removed?.qty || 1, areaId });
+  }
+
+  ok = addToInventory(actor.inventory, inst);
+  return ok;
+}
+
 function dropAllItemsToGround(victim, area){
   const items = Array.isArray(victim?.inventory?.items) ? victim.inventory.items : [];
   if(!items.length) return;
@@ -914,6 +977,9 @@ export function moveActorOneStep(world, who, toAreaId){
   const area = world.map?.areasById?.[String(to)];
   spawnEnterRewardsIfNeeded(world, area, { seed: world.meta.seed, day: world.meta.day });
 
+  // Creatures present in the area immediately attack anyone who enters.
+  applyCreatureAttackOnEnter(world, area, entity, events, { seed: world.meta.seed, day: world.meta.day });
+
 
   if(who === "player"){
     const v = new Set(world.flags.visitedAreas || []);
@@ -1475,12 +1541,6 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
         continue;
       }
 
-      // Attempt to pick up.
-      if(inventoryCount(winner.actor.inventory) >= INVENTORY_LIMIT){
-        events.push({ type:"COLLECT", ok:false, who: winner.who, reason:"inventory_full", itemDefId: item.defId, areaId: area.id });
-        continue;
-      }
-
       // Remove from ground and add to inventory.
       const removed = area.groundItems.splice(idx, 1)[0];
 
@@ -1490,7 +1550,7 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
         events.push({ type:"COLLECT", ok:true, who: winner.who, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id, note:"consumed_on_collect" });
         continue;
       }
-      const ok = addToInventory(winner.actor.inventory, removed);
+      const ok = tryAddWithNpcAutoDiscard(winner.actor, removed, events, { areaId: area.id });
       if(!ok.ok){
         // Put it back at the front if we couldn't add (shouldn't happen if count check passed).
         area.groundItems.unshift(removed);
@@ -1585,15 +1645,8 @@ function distributeSpoils(world, kills, events, { seed, day }){
     while(loot.length){
       const picker = participants[i % participants.length];
       i += 1;
-      if(inventoryCount(picker.actor.inventory) >= INVENTORY_LIMIT){
-        // Can't take more; skip.
-        // If everyone is full, break.
-        const allFull = participants.every(p => inventoryCount(p.actor.inventory) >= INVENTORY_LIMIT);
-        if(allFull) break;
-        continue;
-      }
       const nextItem = loot.shift();
-      const ok = addToInventory(picker.actor.inventory, nextItem);
+      const ok = tryAddWithNpcAutoDiscard(picker.actor, nextItem, events, { areaId: k.areaId });
       if(ok.ok){
         events.push({ type:"SPOILS_PICK", who: picker.id, from: k.deadId, itemDefId: nextItem.defId, qty: nextItem.qty || 1, areaId: k.areaId });
       } else {

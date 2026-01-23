@@ -189,21 +189,30 @@ function decideMove(world, npc, obs, traits, { seed, day }){
     }
   }
 
-  // Decide stay vs move based on "comfort".
-  const stayScore = scoreArea(world, npc, start, 0, traits, visitedSet, { seed, day });
+  // Evaluate stay + destinations.
+  const scored = [{ id: start, steps: 0, route: [], isStay: true } , ...candidates]
+    .map(c => ({
+      ...c,
+      score: scoreArea(world, npc, c.id, c.steps, traits, visitedSet, { seed, day })
+    }))
+    .sort((a,b)=>b.score-a.score);
 
-  let best = null;
-  let bestScore = stayScore;
-  for(const c of candidates){
-    const s = scoreArea(world, npc, c.id, c.steps, traits, visitedSet, { seed, day });
-    if(s > bestScore){ bestScore = s; best = c; }
-  }
+  const stayScore = scored.find(s => s.isStay)?.score ?? -1e9;
+  const bestScore = scored[0]?.score ?? stayScore;
 
-  // Small inertia: don't move unless the best is meaningfully better.
-  if(!best || (bestScore - stayScore) < 0.18){
-    return { source: npc.id, type: "STAY", payload: {} };
-  }
-  return { source: npc.id, type: "MOVE", payload: { route: best.route } };
+  // Inertia: don't move unless it is noticeably better.
+  const moveThreshold = 0.14 + traits.caution * 0.10;
+  const canMove = scored.some(s => !s.isStay && (s.score - stayScore) >= moveThreshold);
+  if(!canMove) return { source: npc.id, type: "STAY", payload: {} };
+
+  // Deterministic weighted choice among the top few candidates.
+  // More cautious NPCs behave more deterministically (lower temperature).
+  const temperature = 0.55 - traits.caution * 0.30; // 0.25..0.55
+  const pool = scored.filter(s => !s.isStay).slice(0, 6);
+  const pickR = hash01(seed, day, `move_pick|${npc.id}`);
+  const chosen = weightedPick(pool, pickR, temperature) || pool[0];
+
+  return { source: npc.id, type: "MOVE", payload: { route: chosen.route } };
 }
 
 function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day }){
@@ -218,8 +227,11 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   const groundCount = Array.isArray(a.groundItems) ? a.groundItems.length : 0;
   const creatures = (a.activeElements || []).filter(e => e?.kind === "creature").length;
 
-  const lootValue = known ? (groundCount * 0.35) : 0.08;
+  const lootValue = known ? (groundCount * 0.35) : 0.10;
   const foodValue = (a.hasFood ? 0.45 : 0) + (a.hasWater ? 0.18 : 0);
+
+  // Exploration bonus: unknown areas can be attractive, but only for less cautious NPCs.
+  const explore = (!known && Number(areaId) !== Number(npc.areaId)) ? (0.18 + traits.greed * 0.18 - traits.caution * 0.12) : 0;
 
   // Crowd pressure: NPCs dislike staying packed together (especially in the Cornucopia).
   let crowd = 0;
@@ -238,6 +250,10 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   const threat = (a.threatClass === "threatening" ? 0.35 : 0.05) + (creatures * 0.25);
   const revisitPenalty = (Number(areaId) === Number(npc.areaId)) ? 0 : (known ? 0.02 : 0.06);
 
+  // Memory: discourage "train" movement where NPCs follow the same loop.
+  const last = Array.isArray(npc.memory?.lastAreas) ? npc.memory.lastAreas : [];
+  const recentPenalty = last.includes(Number(areaId)) ? 0.12 : 0;
+
   const distanceCost = steps * 0.12;
 
   const score =
@@ -247,10 +263,27 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     threat * (0.25 + traits.caution) -
     distanceCost -
     revisitPenalty -
-    crowdPenalty;
+    crowdPenalty +
+    explore -
+    recentPenalty;
 
   // tiny deterministic jitter to break ties.
   return score + (hash01(seed, day, `area_jitter|${npc.id}|${areaId}`) * 0.01);
+}
+
+function weightedPick(options, r01, temperature){
+  if(!options || !options.length) return null;
+  const t = Math.max(0.15, Math.min(0.75, Number(temperature) || 0.45));
+  // Softmax on normalized scores.
+  const maxS = Math.max(...options.map(o => o.score));
+  const weights = options.map(o => Math.exp((o.score - maxS) / t));
+  const sum = weights.reduce((a,b)=>a+b, 0) || 1;
+  let acc = 0;
+  for(let i=0;i<options.length;i++){
+    acc += weights[i] / sum;
+    if(r01 <= acc) return options[i];
+  }
+  return options[options.length - 1];
 }
 
 function estimateKillChance(world, attacker, target, { seed, day }){
