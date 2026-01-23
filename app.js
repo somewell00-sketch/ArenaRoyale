@@ -32,6 +32,8 @@ const uiState = {
   movesUsed: 0,
   dayEvents: [],
   selectedTarget: null,
+  selectedGroundIndex: null,
+  selectionMode: null, // "target" | "item" | null
   leftAlert: null,
 };
 
@@ -297,7 +299,7 @@ function renderGame(){
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
-            <button id="btnCollect" class="btn" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
+            <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
           </div>
 
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
@@ -465,6 +467,8 @@ function renderGame(){
     uiState.movesUsed = 0;
     uiState.dayEvents = [];
     uiState.selectedTarget = null;
+    uiState.selectedGroundIndex = null;
+    uiState.selectionMode = null;
   }
 
   function showLeftAlert(msg){
@@ -506,9 +510,12 @@ function renderGame(){
       btn.onclick = () => {
         const id = btn.getAttribute("data-id");
         uiState.selectedTarget = id;
+        uiState.selectionMode = "target";
+        uiState.selectedGroundIndex = null;
         btnAttack.classList.remove("hidden");
         // refresh selected style
         renderAreaPills();
+        renderGroundItem();
       };
     });
 
@@ -516,6 +523,11 @@ function renderGame(){
     if(uiState.selectedTarget && uiState.selectedTarget !== "player"){
       btnAttack.classList.remove("hidden");
     } else {
+      btnAttack.classList.add("hidden");
+    }
+
+    // If we're not selecting a target, hide the attack option.
+    if(uiState.selectionMode !== "target"){
       btnAttack.classList.add("hidden");
     }
   }
@@ -530,15 +542,16 @@ function renderGame(){
       groundItemWrap.classList.add("hidden");
       btnCollect.classList.add("hidden");
       uiState.selectedGroundIndex = null;
+      if(uiState.selectionMode === "item") uiState.selectionMode = null;
       return;
     }
 
     groundItemWrap.classList.remove("hidden");
-    btnCollect.classList.remove("hidden");
 
-    // Keep selection stable when possible
-    if(uiState.selectedGroundIndex == null || uiState.selectedGroundIndex < 0 || uiState.selectedGroundIndex >= ground.length){
-      uiState.selectedGroundIndex = 0;
+    // If selection is out of range, clear it (do NOT auto-select).
+    if(uiState.selectedGroundIndex != null && (uiState.selectedGroundIndex < 0 || uiState.selectedGroundIndex >= ground.length)){
+      uiState.selectedGroundIndex = null;
+      if(uiState.selectionMode === "item") uiState.selectionMode = null;
     }
 
     groundItemPills.innerHTML = ground.map((it, idx) => {
@@ -553,7 +566,6 @@ function renderGame(){
       const sel = (idx === uiState.selectedGroundIndex) ? "selected" : "";
       return `<button class="itemPill ground ${sel}" data-gidx="${idx}" title="${escapeHtml(tip)}">
         <span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>
-        <span class="pillIcon" aria-hidden="true">${escapeHtml(getItemIcon(it.defId))}</span>
         <span class="pillName">${escapeHtml(name)}${stack}</span>
         ${badge}
       </button>`;
@@ -563,9 +575,19 @@ function renderGame(){
       btn.onclick = () => {
         const idx = Number(btn.getAttribute("data-gidx"));
         uiState.selectedGroundIndex = idx;
+        uiState.selectionMode = "item";
+        uiState.selectedTarget = null;
+        renderAreaPills();
         renderGroundItem();
       };
     });
+
+    // Show Collect only when an item is explicitly selected.
+    if(uiState.selectionMode === "item" && uiState.selectedGroundIndex != null){
+      btnCollect.classList.remove("hidden");
+    } else {
+      btnCollect.classList.add("hidden");
+    }
 
     const full = inventoryCount(p.inventory) >= INVENTORY_LIMIT;
     btnCollect.disabled = full || uiState.phase !== "needs_action";
@@ -747,7 +769,11 @@ function renderGame(){
 
   btnCollect.onclick = () => {
     if(!world) return;
-    const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: (uiState.selectedGroundIndex ?? 0) });
+    if(uiState.selectionMode !== "item" || uiState.selectedGroundIndex == null){
+      showLeftAlert("Select an item to collect.");
+      return;
+    }
+    const { nextWorld, events } = commitPlayerAction(world, { kind:"COLLECT", itemIndex: uiState.selectedGroundIndex });
     world = nextWorld;
     uiState.dayEvents.push(...events);
     uiState.phase = "explore";
