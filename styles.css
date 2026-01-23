@@ -74,6 +74,7 @@ a{ color: var(--accent); }
 }
 
 .h1{ font-size:22px; font-weight:800; letter-spacing:0.2px; }
+.h2{ font-size:18px; font-weight:750; letter-spacing:0.15px; }
 .muted{ color:var(--muted); }
 .small{ font-size:12px; }
 .sep{ border:0; border-top:1px solid rgba(250,208,44,0.18); margin:12px 0; }
@@ -82,6 +83,15 @@ a{ color: var(--accent); }
 .row.space{ justify-content:space-between; }
 
 .select{
+  background: rgba(17,17,19,0.7);
+  color: var(--text);
+  border: 1px solid rgba(250,208,44,0.22);
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.input{
+  width:100%;
   background: rgba(17,17,19,0.7);
   color: var(--text);
   border: 1px solid rgba(250,208,44,0.22);
@@ -98,7 +108,16 @@ a{ color: var(--accent); }
   cursor:pointer;
 }
 
+.btn:disabled{
+  opacity:0.45;
+  cursor:not-allowed;
+}
+
 .btn:hover{ border-color: rgba(250,208,44,0.45); }
+.btn:disabled{
+  opacity:0.5;
+  cursor:not-allowed;
+}
 .btn.primary{
   background: linear-gradient(180deg, var(--primary), rgba(195,106,45,0.75));
   border-color: rgba(250,208,44,0.25);

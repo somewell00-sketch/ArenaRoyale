@@ -48,6 +48,31 @@ function renderStart(){
         <div class="muted">Você começa na Cornucopia (Área 1). Todo dia: primeiro Commit Action, depois você pode se mover (até 3 áreas adjacentes) e encerrar com End Day.</div>
         <hr class="sep" />
 
+        <div class="h2" style="margin:0 0 6px 0;">Atributos do seu jogador (7 pontos)</div>
+        <div class="muted small" style="margin-bottom:8px;">Distribua entre Força (iniciativa), Destreza (itens) e Percepção (ameaças). Sem negativos. Precisa somar 7.</div>
+
+        <div class="row" style="gap:10px; align-items:flex-end;">
+          <div style="flex:1; min-width:120px;">
+            <label class="muted small">Força</label>
+            <input id="attrF" class="input" type="number" min="0" max="7" value="3" />
+          </div>
+          <div style="flex:1; min-width:120px;">
+            <label class="muted small">Destreza</label>
+            <input id="attrD" class="input" type="number" min="0" max="7" value="2" />
+          </div>
+          <div style="flex:1; min-width:120px;">
+            <label class="muted small">Percepção</label>
+            <input id="attrP" class="input" type="number" min="0" max="7" value="2" />
+          </div>
+          <div style="min-width:160px;">
+            <div class="muted small">Total</div>
+            <div id="attrTotal" class="h2" style="margin:0;">7 / 7</div>
+            <div id="attrHint" class="muted small">—</div>
+          </div>
+        </div>
+
+        <hr class="sep" />
+
         <div class="row">
           <label class="muted">Map size</label>
           <select id="size" class="select">
@@ -70,7 +95,7 @@ function renderStart(){
         </div>
 
         <div class="row" style="margin-top:10px;">
-          <button id="enter" class="btn primary" style="flex:1;">Enter arena</button>
+          <button id="enter" class="btn primary" style="flex:1;" disabled>Enter arena</button>
           <button id="resume" class="btn">Resume</button>
           <button id="wipe" class="btn">Clear save</button>
         </div>
@@ -78,11 +103,52 @@ function renderStart(){
     </div>
   `;
 
-  document.getElementById("enter").onclick = () => {
+  const elF = document.getElementById("attrF");
+  const elD = document.getElementById("attrD");
+  const elP = document.getElementById("attrP");
+  const totalEl = document.getElementById("attrTotal");
+  const hintEl = document.getElementById("attrHint");
+  const enterBtn = document.getElementById("enter");
+
+  function clampInput(el){
+    const v = Number(el.value);
+    if(!Number.isFinite(v)) el.value = 0;
+    el.value = Math.max(0, Math.min(7, Math.floor(Number(el.value) || 0)));
+  }
+
+  function updateAttrsUI(){
+    clampInput(elF); clampInput(elD); clampInput(elP);
+    const F = Number(elF.value) || 0;
+    const D = Number(elD.value) || 0;
+    const P = Number(elP.value) || 0;
+    const sum = F + D + P;
+    totalEl.textContent = `${sum} / 7`;
+    if(sum === 7){
+      hintEl.textContent = "OK";
+      enterBtn.disabled = false;
+    } else {
+      const diff = 7 - sum;
+      hintEl.textContent = diff > 0 ? `Faltam ${diff} ponto(s)` : `Remova ${Math.abs(diff)} ponto(s)`;
+      enterBtn.disabled = true;
+    }
+  }
+
+  [elF, elD, elP].forEach(el => {
+    el.addEventListener("input", updateAttrsUI);
+    el.addEventListener("change", updateAttrsUI);
+  });
+  updateAttrsUI();
+
+  enterBtn.onclick = () => {
     const mapSize = Number(document.getElementById("size").value);
     const totalPlayers = Number(document.getElementById("players").value);
     const playerDistrict = Number(document.getElementById("district").value);
-    startNewGame(mapSize, totalPlayers, playerDistrict);
+    const playerAttrs = {
+      F: Number(elF.value) || 0,
+      D: Number(elD.value) || 0,
+      P: Number(elP.value) || 0,
+    };
+    startNewGame(mapSize, totalPlayers, playerDistrict, playerAttrs);
   };
 
   document.getElementById("resume").onclick = () => {
@@ -102,7 +168,7 @@ function renderStart(){
   };
 }
 
-function startNewGame(mapSize, totalPlayers, playerDistrict){
+function startNewGame(mapSize, totalPlayers, playerDistrict, playerAttrs){
   const seed = (Math.random() * 1e9) | 0;
   const mapData = generateMapData({
     seed,
@@ -112,7 +178,7 @@ function startNewGame(mapSize, totalPlayers, playerDistrict){
     paletteIndex: 0
   });
 
-  world = createInitialWorld({ seed, mapSize, mapData, totalPlayers, playerDistrict });
+  world = createInitialWorld({ seed, mapSize, mapData, totalPlayers, playerDistrict, playerAttrs });
 
   uiState.focusedAreaId = 1;
   uiState.phase = "needs_action";
@@ -331,33 +397,6 @@ function renderGame(){
 
     curAreaEl.textContent = String(p.areaId);
 
-    // Debug panel: list all tributes with HP + area.
-    if(debugList){
-      const rows = [];
-      const everyone = [
-        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0 },
-        ...Object.values(world.entities.npcs || {}).map(n => ({
-          id: n.id,
-          name: n.name,
-          district: n.district,
-          hp: n.hp ?? 100,
-          areaId: n.areaId,
-          dead: (n.hp ?? 0) <= 0,
-        }))
-      ];
-      everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
-      for(const t of everyone){
-        const status = t.dead ? "DEAD" : "ALIVE";
-        rows.push(
-          `<div class="debugRow">
-            <div class="debugName"><strong>${escapeHtml(t.name)}</strong> <span class="muted small">${escapeHtml(districtTag(t.district))}</span></div>
-            <div class="debugMeta"><span class="pill">HP ${escapeHtml(String(t.hp))}</span><span class="pill">Area ${escapeHtml(String(t.areaId))}</span><span class="pill">${status}</span></div>
-          </div>`
-        );
-      }
-      debugList.innerHTML = rows.join("") || `<div class="muted small">—</div>`;
-    }
-
     const movesLeft = Math.max(0, MAX_MOVES_PER_DAY - uiState.movesUsed);
     movesLeftEl.textContent = String(movesLeft);
     if(movesLeftEl2) movesLeftEl2.textContent = String(movesLeft);
@@ -391,7 +430,7 @@ function renderGame(){
     // Debug list (compact)
     if(debugList){
       const everyone = [
-        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0 },
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs },
         ...Object.values(world.entities.npcs || {}).map(n => ({
           id: n.id,
           name: n.name,
@@ -399,14 +438,18 @@ function renderGame(){
           hp: n.hp ?? 100,
           areaId: n.areaId,
           dead: (n.hp ?? 0) <= 0,
+          attrs: n.attrs,
         }))
       ];
       everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
       debugList.innerHTML = everyone.map(t => {
         const status = t.dead ? "DEAD" : "ALIVE";
+        const F = t.attrs?.F ?? 0;
+        const D = t.attrs?.D ?? 0;
+        const P = t.attrs?.P ?? 0;
         return `<div class="debugCard ${t.dead ? "dead" : ""}">
           <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
-          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>${status}</span></div>
+          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>${status}</span></div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
     }

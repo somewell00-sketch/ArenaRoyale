@@ -571,7 +571,7 @@ function generateTributeName(district, rng){
   return `${first} ${last}`;
 }
 
-export function createInitialWorld({ seed, mapSize, mapData, totalPlayers = 12, playerDistrict = 12 }){
+export function createInitialWorld({ seed, mapSize, mapData, totalPlayers = 12, playerDistrict = 12, playerAttrs = null }){
   const total = Math.max(2, Math.min(48, Number(totalPlayers) || 12));
   const npcCount = total - 1;
 
@@ -611,6 +611,8 @@ for (let i = 1; i <= npcCount; i++){
   };
 }
 
+  const resolvedPlayerAttrs = normalizeAttrs7(playerAttrs) || { F: 3, D: 2, P: 2 };
+
   const world = {
     meta: {
       version: 1,
@@ -629,7 +631,7 @@ for (let i = 1; i <= npcCount; i++){
         hp: 100,
         fp: 70,
         kills: 0,
-        attrs: { F: 3, D: 2, P: 2 },
+        attrs: resolvedPlayerAttrs,
         status: [],
         inventory: {},
         memory: { goal: "survive" }
@@ -673,6 +675,19 @@ function randomAttrs7(rng){
   }
   return {
     turnDraft: null, F: arr[0], D: arr[1], P: arr[2] };
+}
+
+function normalizeAttrs7(input){
+  if(!input) return null;
+  const F = Number(input.F);
+  const D = Number(input.D);
+  const P = Number(input.P);
+  if(!Number.isFinite(F) || !Number.isFinite(D) || !Number.isFinite(P)) return null;
+  const f = Math.max(0, Math.floor(F));
+  const d = Math.max(0, Math.floor(D));
+  const p = Math.max(0, Math.floor(P));
+  if(f + d + p !== 7) return null;
+  return { F: f, D: d, P: p };
 }
 
 export function cloneWorld(world){
