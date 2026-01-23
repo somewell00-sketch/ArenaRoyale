@@ -39,6 +39,131 @@ const uiState = {
 
 const MAX_MOVES_PER_DAY = 3;
 
+// --- Tooltip helpers (single tooltip for the whole UI) ---
+function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+function hash32(str){
+  // Deterministic small hash (FNV-1a-ish)
+  let h = 2166136261;
+  for(let i=0;i<str.length;i++){
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  // force unsigned 32-bit
+  return h >>> 0;
+}
+
+function pickDeterministic(list, key){
+  if(!list || list.length === 0) return "";
+  const idx = hash32(key) % list.length;
+  return list[idx];
+}
+
+function hpSignal(hp, key){
+  if(hp <= 0) return pickDeterministic([
+    "Falls lifeless.",
+    "Drops to the ground, dead."
+  ], key + ":hp:dead");
+  if(hp <= 14) return pickDeterministic([
+    "Barely standing, bleeding heavily.",
+    "On the verge of physical collapse.",
+    "Struggling to stay upright, bleeding heavily."
+  ], key + ":hp:crit");
+  if(hp <= 39) return pickDeterministic([
+    "Bleeding heavily.",
+    "Severely injured.",
+    "Struggling to stay upright."
+  ], key + ":hp:low");
+  if(hp <= 69) return pickDeterministic([
+    "Visible wounds.",
+    "Clearly injured, but still standing.",
+    "Blood is visible."
+  ], key + ":hp:mid");
+  return pickDeterministic([
+    "No visible wounds.",
+    "Minor cuts and scratches.",
+    "Superficial injuries."
+  ], key + ":hp:high");
+}
+
+function fpSignal(fp, key){
+  if(fp <= 0) return "Collapses from exhaustion.";
+  if(fp <= 14) return pickDeterministic([
+    "Breathing is labored.",
+    "Slow reactions.",
+    "Movements are slowing."
+  ], key + ":fp:crit");
+  if(fp <= 34) return pickDeterministic([
+    "Breathing is faster.",
+    "Showing signs of fatigue.",
+    "Movement is less consistent."
+  ], key + ":fp:mid");
+  return pickDeterministic([
+    "Steady and confident movements.",
+    "Breathing is calm and controlled.",
+    "Maintains a strong posture."
+  ], key + ":fp:high");
+}
+
+function tierHP(hp){
+  if(hp <= 0) return 4;
+  if(hp <= 14) return 3;
+  if(hp <= 39) return 2;
+  if(hp <= 69) return 1;
+  return 0;
+}
+function tierFP(fp){
+  if(fp <= 0) return 3;
+  if(fp <= 14) return 2;
+  if(fp <= 34) return 1;
+  return 0;
+}
+
+function statusTooltipFor(entity, worldMeta){
+  const hp = Number(entity?.hp ?? 0);
+  const fp = Number(entity?.fp ?? 0);
+  const keyBase = `${worldMeta?.seed ?? 0}:${worldMeta?.day ?? 0}:${entity?.id ?? "?"}`;
+
+  // Death is always just the HP signal.
+  if(hp <= 0) return hpSignal(hp, keyBase);
+
+  const hpT = tierHP(hp);
+  const fpT = tierFP(fp);
+  const hpS = hpSignal(hp, keyBase);
+  const fpS = fpSignal(fp, keyBase);
+
+  // Mold B: critical state -> two short sentences.
+  if(hpT >= 3 || fpT >= 2){
+    // Prioritize the worse axis first.
+    if(hpT > fpT) return `${hpS} ${fpS}`;
+    if(fpT > hpT) return `${fpS} ${hpS}`;
+    return `${hpS} ${fpS}`;
+  }
+
+  // Mold A: one dominant axis
+  const diff = Math.abs(hpT - fpT);
+  if(diff >= 1){
+    const connector = pickDeterministic(["but", "while", "despite", "even though"], keyBase + ":conn");
+    if(hpT > fpT){
+      return `${stripPeriod(hpS)}, ${connector} ${lowerFirst(stripPeriod(fpS))}.`;
+    }
+    if(fpT > hpT){
+      return `${stripPeriod(fpS)}, ${connector} ${lowerFirst(stripPeriod(hpS))}.`;
+    }
+  }
+
+  // Mold C: balanced
+  return `${stripPeriod(hpS)} and ${lowerFirst(stripPeriod(fpS))}.`;
+}
+
+function stripPeriod(s){
+  return String(s || "").replace(/\.$/, "").trim();
+}
+function lowerFirst(s){
+  const t = String(s || "").trim();
+  return t ? (t[0].toLowerCase() + t.slice(1)) : t;
+}
+
 const DISTRICT_INFO = {
   1: { name: "Luxury items", emoji: "💎", career: true },
   2: { name: "Masonry, defense, weaponry", emoji: "🛡️", career: true },
@@ -301,11 +426,11 @@ function renderGame(){
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
-            <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" title="Restore 5 FP by drinking water">Drink water</button>
-            <button id="btnSetNet" class="btn purple hidden" style="flex:1; min-width:120px;" title="Set a Net trap here (activates tomorrow)">Set Net</button>
-            <button id="btnSetMine" class="btn orange hidden" style="flex:1; min-width:120px;" title="Set a Mine trap here (activates tomorrow)">Set Mine</button>
+            <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" data-tooltip="Restore 5 FP by drinking water">Drink water</button>
+            <button id="btnSetNet" class="btn purple hidden" style="flex:1; min-width:120px;" data-tooltip="Set a Net trap here (activates tomorrow)">Set Net</button>
+            <button id="btnSetMine" class="btn orange hidden" style="flex:1; min-width:120px;" data-tooltip="Set a Mine trap here (activates tomorrow)">Set Mine</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
-            <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" title="Pick up the item on the ground">Collect item</button>
+            <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" data-tooltip="Pick up the selected item">Collect item</button>
           </div>
 
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
@@ -327,7 +452,7 @@ function renderGame(){
           </div>
           <div class="muted" style="margin-top:10px;">You can only escape by cutting the net with a Dagger.</div>
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
-            <button id="btnCutNet" class="btn red hidden" style="flex:1; min-width:160px;" title="Consume 1 Dagger to escape">Cut net (Dagger)</button>
+            <button id="btnCutNet" class="btn red hidden" style="flex:1; min-width:160px;" data-tooltip="Consume 1 Dagger to escape">Cut net (Dagger)</button>
             <button id="btnEndDayTrapped" class="btn green" style="flex:1; min-width:160px;">End Day</button>
           </div>
         </div>
@@ -384,6 +509,8 @@ function renderGame(){
         </div>
       </aside>
     </div>
+
+    <div id="uiTooltip" class="uiTooltip hidden" role="tooltip"></div>
   `;
 
   const dayEl = document.getElementById("day");
@@ -425,6 +552,8 @@ function renderGame(){
   const confirmYes = document.getElementById("confirmYes");
   const confirmNo = document.getElementById("confirmNo");
 
+  const uiTooltipEl = document.getElementById("uiTooltip");
+
   const areaInfoEl = document.getElementById("areaInfo");
 
   const canvas = document.getElementById("c");
@@ -440,6 +569,45 @@ function renderGame(){
   });
 
   let pendingConsume = null;
+
+  // Tooltip system: use data-tooltip attributes and render a single styled tooltip.
+  let tooltipActive = false;
+  let tooltipText = "";
+  function showTooltip(text){
+    if(!uiTooltipEl) return;
+    tooltipActive = true;
+    tooltipText = String(text || "");
+    uiTooltipEl.textContent = tooltipText;
+    uiTooltipEl.classList.remove("hidden");
+  }
+  function hideTooltip(){
+    tooltipActive = false;
+    if(!uiTooltipEl) return;
+    uiTooltipEl.classList.add("hidden");
+  }
+  function moveTooltip(e){
+    if(!tooltipActive || !uiTooltipEl) return;
+    const pad = 14;
+    const w = uiTooltipEl.offsetWidth || 240;
+    const h = uiTooltipEl.offsetHeight || 80;
+    const x = clamp((e.clientX + 14), pad, window.innerWidth - w - pad);
+    const y = clamp((e.clientY + 16), pad, window.innerHeight - h - pad);
+    uiTooltipEl.style.left = `${x}px`;
+    uiTooltipEl.style.top = `${y}px`;
+  }
+  // capture events so pills can be re-rendered without re-binding tooltip handlers
+  root.addEventListener("mousemove", moveTooltip, { passive:true });
+  root.addEventListener("mouseover", (e) => {
+    const t = e.target?.closest?.("[data-tooltip]");
+    if(!t) return;
+    const text = t.getAttribute("data-tooltip");
+    if(text){ showTooltip(text); }
+  });
+  root.addEventListener("mouseout", (e) => {
+    const from = e.target?.closest?.("[data-tooltip]");
+    const to = e.relatedTarget?.closest?.("[data-tooltip]");
+    if(from && from !== to) hideTooltip();
+  });
   confirmNo.onclick = () => {
     pendingConsume = null;
     confirmModal.classList.add("hidden");
@@ -522,14 +690,16 @@ function renderGame(){
     const here = p.areaId;
     const npcsHere = Object.values(world.entities.npcs || {}).filter(n => (n.hp ?? 0) > 0 && n.areaId === here);
     const items = [
-      { id:"player", name:"You", district:p.district, selectable:false },
-      ...npcsHere.map(n => ({ id:n.id, name:n.name, district:n.district, selectable:true }))
+      { id:"player", name:"You", district:p.district, selectable:false, entity:p },
+      ...npcsHere.map(n => ({ id:n.id, name:n.name, district:n.district, selectable:true, entity:n }))
     ];
 
     areaPillsEl.innerHTML = items.length ? items.map(t => {
       const selected = uiState.selectedTarget === t.id;
       const cls = `playerPill ${t.selectable ? "selectable" : ""} ${selected ? "selected" : ""}`;
-      return `<button class="${cls}" data-id="${escapeHtml(t.id)}" ${t.selectable ? "" : "disabled"}>
+      const tip = t.entity ? statusTooltipFor(t.entity, world?.meta) : "";
+      const tipAttr = tip ? ` data-tooltip="${escapeHtml(tip)}"` : "";
+      return `<button class="${cls}" data-id="${escapeHtml(t.id)}" ${t.selectable ? "" : "disabled"}${tipAttr}>
         <span class="pillName">${escapeHtml(t.name)}</span>
         <span class="pillSub">${escapeHtml(districtTag(t.district))}</span>
       </button>`;
@@ -592,9 +762,9 @@ function renderGame(){
       const dmg = def?.type === ItemTypes.WEAPON ? displayDamageLabel(def.id, qty) : "";
       const badge = def?.type === ItemTypes.WEAPON ? `<span class="pillBadge">${escapeHtml(dmg || "")}</span>` : "";
       const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
-      const tip = def ? def.description : "";
+      const tip = def ? buildItemTooltip(def, it, qty) : "";
       const sel = (idx === uiState.selectedGroundIndex) ? "selected" : "";
-      return `<button class="itemPill ground ${sel}" data-gidx="${idx}" title="${escapeHtml(tip)}">
+      return `<button class="itemPill ground ${sel}" data-gidx="${idx}" data-tooltip="${escapeHtml(tip)}">
         <span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>
         <span class="pillName">${escapeHtml(name)}${stack}</span>
         ${badge}
@@ -621,7 +791,7 @@ function renderGame(){
 
     const full = inventoryCount(p.inventory) >= INVENTORY_LIMIT;
     btnCollect.disabled = full || uiState.phase !== "needs_action";
-    btnCollect.title = full ? "Inventory is full. Discard something first." : "Pick up the selected item";
+    btnCollect.setAttribute("data-tooltip", full ? "Inventory is full. Discard something first." : "Pick up the selected item");
   }
 
   function renderInventory(){
@@ -645,7 +815,8 @@ function renderGame(){
       const tip = def ? def.description : "";
       const badge = def?.type === ItemTypes.WEAPON ? `<span class="pillBadge">${escapeHtml(dmg || "")}</span>` : "";
       const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
-      return `<button class="itemPill ${eq} ${de}" data-idx="${idx}" title="${escapeHtml(tip)}">
+      const tooltip = buildItemTooltip(def, it, qty);
+      return `<button class="itemPill ${eq} ${de}" data-idx="${idx}" data-tooltip="${escapeHtml(tooltip)}">
         <span class="pillIcon" aria-hidden="true">${escapeHtml(getItemIcon(it.defId))}</span>
         <span class="pillName">${escapeHtml(name)}${stack}</span>
         ${badge}
@@ -681,6 +852,25 @@ function renderGame(){
         }
       };
     });
+  }
+
+  function buildItemTooltip(def, it, qty){
+    if(!def) return "";
+    const lines = [];
+    lines.push(def.name);
+    if(def.type === ItemTypes.WEAPON){
+      const dmg = displayDamageLabel(def.id, qty);
+      if(dmg) lines.push(`Damage: ${dmg}`);
+    }
+    if(def.type === ItemTypes.PROTECTION){
+      lines.push("Protection item.");
+    }
+    if(def.type === ItemTypes.CONSUMABLE){
+      lines.push("Consumable.");
+    }
+    if(it?.usesLeft != null) lines.push(`Uses left: ${it.usesLeft}`);
+    if(def.description) lines.push(def.description);
+    return lines.join("\n");
   }
 
   function sync(){

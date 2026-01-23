@@ -463,6 +463,35 @@ textarea{
   box-shadow: 0 20px 60px rgba(0,0,0,0.55);
 }
 
+/* --- UI Tooltip (custom, replaces browser title tooltip) --- */
+.uiTooltip.hidden{ display:none !important; }
+.uiTooltip{
+  position: fixed;
+  z-index: 999;
+  max-width: 340px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(26,20,19,0.96), rgba(17,17,19,0.96));
+  border: 1px solid rgba(250,208,44,0.38);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+  color: rgba(240,240,242,0.95);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-line;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
+/* Slightly stronger affordance when an element has a tooltip */
+[data-tooltip]{
+  text-decoration: none;
+}
+.playerPill[data-tooltip],
+.itemPill[data-tooltip],
+.btn[data-tooltip]{
+  cursor: help;
+}
+
 .areaInfo{
   position:absolute;
   right:12px;
