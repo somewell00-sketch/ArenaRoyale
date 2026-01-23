@@ -1483,7 +1483,9 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
 function resolveCollectContests(world, collectReqs, events, { seed, day, killsThisDay, startAreas }){
   if(!collectReqs.length) return;
 
-  // Group requests by area then itemIndex. We resolve itemIndex ascending to keep deterministic.
+  // Group requests by area then itemIndex.
+  // IMPORTANT: resolve indices in DESC order so removing an item does not shift
+  // the indices of items that are still going to be resolved in the same area.
   const byArea = new Map();
   for(const r of collectReqs){
     if(r == null) continue;
@@ -1503,7 +1505,8 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
       byIndex.get(idx).push(r);
     }
 
-    const indices = Array.from(byIndex.keys()).sort((a,b)=>a-b);
+    // Descending: safe with in-place splice(idx,1).
+    const indices = Array.from(byIndex.keys()).sort((a,b)=>b-a);
     for(const idx of indices){
       const item = area.groundItems[idx];
       if(!item) continue;
@@ -1543,6 +1546,15 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
 
       // Remove from ground and add to inventory.
       const removed = area.groundItems.splice(idx, 1)[0];
+
+      // Backpack rule: opens immediately into 2–3 items, backpack disappears.
+      if(removed?.defId === "backpack"){
+        const lootEvents = [];
+        openBackpackIntoInventory(world, winner.actor, area, removed, lootEvents, { seed, day });
+        events.push({ type:"COLLECT", ok:true, who: winner.who, itemDefId:"backpack", qty:1, areaId: area.id, note:"opened" });
+        events.push(...lootEvents);
+        continue;
+      }
 
       // Auto-consume resources on collect (finite).
       const consumed = applyOnCollect(world, winner.actor, area, removed, events);
