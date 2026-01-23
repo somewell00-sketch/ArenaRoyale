@@ -134,12 +134,24 @@ function applyTrapsAtStartOfDay(world, events, { day }){
         const spared = candidates.filter(a => (a.attrs?.P ?? 0) === maxP).map(a => a.id);
         const caughtActors = candidates.filter(a => (a.attrs?.P ?? 0) < maxP);
 
+        // Optional protection: preventTrapOnce (from Survival Kit) lets you avoid being trapped once.
+        const prevented = [];
+        const caughtFinal = [];
+        for(const a of caughtFinal){
+          if(a?._meta?.preventTrapOnce){
+            a._meta.preventTrapOnce = false;
+            prevented.push(a.id);
+          } else {
+            caughtFinal.push(a);
+          }
+        }
+
         // Apply capture (2 days) to everyone except owner + highest perception.
-        for(const a of caughtActors){
+        for(const a of caughtFinal){
           a.trappedDays = Math.max(a.trappedDays ?? 0, 2);
           events.push({ type:"NET_CAUGHT", who: a.id, areaId: area.id, days: 2 });
         }
-        events.push({ type:"NET_TRIGGER", areaId: area.id, caught: caughtActors.map(a => a.id), spared });
+        events.push({ type:"NET_TRIGGER", areaId: area.id, caught: caughtFinal.map(a => a.id), spared: [...spared, ...prevented] });
         continue;
       }
 
@@ -223,6 +235,153 @@ function openBackpackIntoInventory(world, owner, area, backpackInstance, events,
     }
   }
 }
+
+
+function applyOnCollect(world, collector, area, itemInst, events){
+  const def = getItemDef(itemInst?.defId);
+  if(!def) return { consumed:false };
+
+  if(def.effects?.autoConsumeOnCollect){
+    // Heal HP
+    if(def.effects?.healHP){
+      const amt = Number(def.effects.healHP) || 0;
+      if(amt > 0){
+        collector.hp = Math.min(100, (collector.hp ?? 100) + amt);
+        events.push({ type:"HEAL", who: collector.id, by: "resource", amount: amt, itemDefId: def.id, areaId: area.id });
+      }
+    }
+    // Cure poison
+    if(def.effects?.curePoison){
+      const hadPoison = (collector.status || []).some(s => s?.type === "poison");
+      if(hadPoison){
+        collector.status = (collector.status || []).filter(s => s?.type !== "poison");
+        events.push({ type:"POISON_CURED", who: collector.id, by: "resource", itemDefId: def.id, areaId: area.id });
+      }
+    }
+    // Prevent trap once
+    if(def.effects?.preventTrapOnce){
+      collector._meta = collector._meta || {};
+      collector._meta.preventTrapOnce = true;
+      events.push({ type:"BUFF", who: collector.id, kind:"prevent_trap_once", itemDefId: def.id, areaId: area.id });
+    }
+    // Ignore move block today
+    if(def.effects?.ignoreMoveBlockToday){
+      collector._today = collector._today || {};
+      collector._today.ignoreMoveBlock = true;
+      events.push({ type:"BUFF", who: collector.id, kind:"ignore_move_block_today", itemDefId: def.id, areaId: area.id });
+    }
+    return { consumed:true };
+  }
+
+  return { consumed:false };
+}
+
+
+function spawnEnterRewardsIfNeeded(world, area, { seed, day }){
+  if(!area || area.id === 1) return;
+  if(area._rewardSpawned) return;
+  area._rewardSpawned = true;
+
+  const biome = String(area.biome || "").toLowerCase();
+  area.groundItems = Array.isArray(area.groundItems) ? area.groundItems : [];
+
+  // Food / healing resources (finite, consumed on collect)
+  const vegetation = ["plains","woods","forest","jungle","savanna","caatinga"];
+  const isVeg = vegetation.includes(biome);
+  const isWater = (biome === "lake" || biome === "swamp");
+
+  if(prng(seed, day, `spawn_food_${area.id}`) < (isVeg ? 0.40 : isWater ? 0.40 : 0.12)){
+    let pick = "wild_fruits";
+    if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
+    if(isWater) pick = "freshwater_fish";
+    // Rare ration (very low)
+    if(prng(seed+991, day, `spawn_ration_${area.id}`) < 0.03) pick = "capital_ration";
+    area.groundItems.push({ defId: pick, qty: 1, meta: { spawned:true } });
+  }
+
+  // Backpack chance
+  const bpChance = (biome === "industrial") ? 0.25 : 0.10;
+  if(prng(seed, day, `spawn_backpack_${area.id}`) < bpChance){
+    area.groundItems.push({ defId: "backpack", qty: 1, meta: { seedTag: `bp_enter_${area.id}_${day}` } });
+  }
+}
+
+function applyDailyThreats(world, events, { seed, day }){
+  const areas = Object.values(world.map?.areasById || {});
+  for(const area of areas){
+    if(!area) continue;
+    if(area.id === 1) continue;
+    if(area.isActive === false) continue;
+    if(String(area.threatClass) !== "threatening") continue;
+
+    const present = getAliveActorsInArea(world, area.id);
+    if(present.length === 0) continue;
+
+    const creatures = (area.activeElements || []).filter(e => e?.kind === "creature");
+    let chance = 0.22;
+    if(creatures.length) chance += 0.15;
+    if(prng(seed, day, `threat_roll_${area.id}`) >= chance) continue;
+
+    // Pick target: lowest Perception, tie by initiative
+    const scored = present.map(a => ({
+      id: a.id,
+      P: a.attrs?.P ?? 0,
+      init: initiativeScore(seed, day, a.id)
+    })).sort((x,y)=>x.P-y.P || y.init-x.init);
+    const target = actorById(world, scored[0].id);
+    if(!target || (target.hp ?? 0) <= 0) continue;
+
+    // Choose threat type
+    const roll = prng(seed, day, `threat_kind_${area.id}`);
+    let threatType = "hazard";
+    if(creatures.length && roll < 0.70) threatType = "creature_attack";
+    else if(roll < 0.45) threatType = "creature_attack";
+
+    if(threatType === "creature_attack"){
+      // Choose creature: prefer existing, else spawn a biome creature now (non-persistent)
+      let creature = creatures.length ? creatures[Math.floor(prng(seed+17, day, `threat_cre_${area.id}`) * creatures.length)] : null;
+      if(!creature){
+        creature = { name:"Unknown Creature", dmgMin:8, dmgMax:18, modifier:null, modifierType:null, modifierValue:null };
+      }
+
+      let dmg = creature.dmgMin + Math.floor(prng(seed, day, `threat_dmg_${area.id}`) * (creature.dmgMax - creature.dmgMin + 1));
+      if(creature.modifierType === "damage_add") dmg += Number(creature.modifierValue) || 0;
+      if(creature.modifierType === "damage_mul") dmg = Math.floor(dmg * (Number(creature.modifierValue) || 1));
+
+      applyDamage(target, dmg);
+      events.push({ type:"THREAT", kind:"creature", areaId: area.id, target: target.id, creature: creature.modifier ? `${creature.modifier} ${creature.name}` : creature.name, dmg });
+
+      if(creature.modifierType === "poison"){
+        target.status = target.status || [];
+        if(!(target.status || []).some(s => s?.type === "poison")){
+          target.status.push({ type:"poison", perDay: 10, by:"creature" });
+          events.push({ type:"POISON_APPLIED", who: target.id, by:"creature" });
+        }
+      }
+
+      if((target.hp ?? 0) <= 0){
+        events.push({ type:"DEATH", who: target.id, areaId: target.areaId, reason:"threat" });
+      }
+    } else {
+      const dmg = 5 + Math.floor(prng(seed, day, `haz_dmg_${area.id}`) * 11); // 5..15
+      applyDamage(target, dmg);
+      events.push({ type:"THREAT", kind:"hazard", areaId: area.id, target: target.id, dmg });
+      if((target.hp ?? 0) <= 0) events.push({ type:"DEATH", who: target.id, areaId: target.areaId, reason:"threat" });
+    }
+  }
+}
+
+function getAliveActorsInArea(world, areaId){
+  const out = [];
+  const p = world.entities?.player;
+  if(p && (p.hp ?? 0) > 0 && p.areaId === areaId) out.push(p);
+  for(const npc of Object.values(world.entities?.npcs || {})){
+    if(npc && (npc.hp ?? 0) > 0 && npc.areaId === areaId) out.push(npc);
+  }
+  return out;
+}
+
+
 
 export function commitPlayerAction(world, action){
   // Applies immediately. Returns { nextWorld, events }.
@@ -388,6 +547,13 @@ export function commitPlayerAction(world, action){
     }
 
     // Normal item pickup.
+
+    // Auto-consume resources on collect (finite).
+    const consumed = applyOnCollect(next, winner, area, removed, events);
+    if(consumed.consumed){
+      events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id, note:"consumed_on_collect" });
+      return { nextWorld: next, events };
+    }
     const ok = addToInventory(winner.inventory, removed);
     if(!ok.ok){
       // Can't take: drop it back to ground (end) and report.
@@ -679,8 +845,13 @@ export function moveActorOneStep(world, who, toAreaId){
   if((entity.hp ?? 0) <= 0) return { ok:false, events };
 
   if((entity.trappedDays ?? 0) > 0){
-    events.push({ type:"MOVE_BLOCKED", who, from: entity.areaId, to: Number(toAreaId), reason:"trapped" });
-    return { ok:false, events };
+    if(entity._today?.ignoreMoveBlock){
+      entity._today.ignoreMoveBlock = false;
+      events.push({ type:"MOVE_BLOCK_IGNORED", who, reason:"trapped" });
+    } else {
+      events.push({ type:"MOVE_BLOCKED", who, from: entity.areaId, to: Number(toAreaId), reason:"trapped" });
+      return { ok:false, events };
+    }
   }
 
   const from = entity.areaId;
@@ -702,6 +873,11 @@ export function moveActorOneStep(world, who, toAreaId){
 
   entity.areaId = to;
   events.push({ type:"MOVE", who, from, to });
+
+  // Finite resource spawns happen on first entry (data-driven).
+  const area = world.map?.areasById?.[String(to)];
+  spawnEnterRewardsIfNeeded(world, area, { seed: world.meta.seed, day: world.meta.day });
+
 
   if(who === "player"){
     const v = new Set(world.flags.visitedAreas || []);
@@ -800,6 +976,10 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
   // Apply traps (Net / Mine) now that the new day has begun.
   // Traps only activate starting the day after they were set.
   applyTrapsAtStartOfDay(next, events, { day: next.meta.day });
+
+  // Daily threats: only threatening areas roll when they contain players.
+  applyDailyThreats(next, events, { seed: seed, day: next.meta.day });
+
 
   // --- 6.2 Spoils after a kill ---
   // Loot is distributed among participants (who dealt damage / were in the dispute)
@@ -951,6 +1131,13 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
 
       // Remove from ground and add to inventory.
       const removed = area.groundItems.splice(idx, 1)[0];
+
+      // Auto-consume resources on collect (finite).
+      const consumed = applyOnCollect(world, winner.actor, area, removed, events);
+      if(consumed.consumed){
+        events.push({ type:"COLLECT", ok:true, who: winner.who, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id, note:"consumed_on_collect" });
+        continue;
+      }
       const ok = addToInventory(winner.actor.inventory, removed);
       if(!ok.ok){
         // Put it back at the front if we couldn't add (shouldn't happen if count check passed).

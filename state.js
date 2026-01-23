@@ -693,6 +693,10 @@ for (let i = 1; i <= npcCount; i++){
     if(!Array.isArray(a.groundItems)) a.groundItems = [];
   }
 
+
+  // Initialize threats / active elements / finite resources (special elements)
+  initAreaThreatsElementsAndResources(world, rng);
+
   // Cornucopia starting loot: backpacks = 2/3 of total players
   // Each backpack contains 2–3 items.
   const backpacks = Math.max(1, Math.floor((total * 2) / 3));
@@ -715,6 +719,143 @@ for (let i = 1; i <= npcCount; i++){
   }
 
   return world;
+}
+
+
+// --- Threats / Elements / Resources (consolidated system) ---
+const BIOME_LIST = [
+  "glacier","tundra","mountain",
+  "desert","caatinga","savanna",
+  "plains","woods","forest","jungle",
+  "fairy","swamp","lake","industrial"
+];
+
+const CREATURE_GROUPS = {
+  cold: [
+    { name:"Wolf-Bear", dmgMin:15, dmgMax:25 },
+    { name:"Iron Eagle", dmgMin:10, dmgMax:18 },
+    { name:"Thermal Serpent", dmgMin:8, dmgMax:12 },
+    { name:"Mimetic Yeti", dmgMin:20, dmgMax:30 }
+  ],
+  arid: [
+    { name:"Whip Scorpion", dmgMin:12, dmgMax:20 },
+    { name:"Bomb Armadillo", dmgMin:25, dmgMax:35 },
+    { name:"Vigilant Vulture", dmgMin:5, dmgMax:10 },
+    { name:"Glass Lizard", dmgMin:10, dmgMax:15 }
+  ],
+  green: [
+    { name:"Tracker Wasp", dmgMin:8, dmgMax:14 },
+    { name:"Shadow Panther", dmgMin:18, dmgMax:28 },
+    { name:"Howler Monkey", dmgMin:5, dmgMax:12 },
+    { name:"Thorn Wolf", dmgMin:12, dmgMax:22 }
+  ],
+  special: [
+    { name:"Giant Bullfrog", dmgMin:15, dmgMax:20 },
+    { name:"Blade Dragonfly", dmgMin:10, dmgMax:16 },
+    { name:"Mechanical Dog", dmgMin:20, dmgMax:30 },
+    { name:"Pulse Eel", dmgMin:15, dmgMax:25 }
+  ]
+};
+
+const BIOME_TO_GROUP = {
+  glacier: "cold", tundra: "cold", mountain: "cold",
+  desert: "arid", caatinga: "arid", savanna: "arid",
+  plains: "green", woods: "green", forest: "green", jungle: "green",
+  fairy: "special", swamp: "special", lake: "special", industrial: "special"
+};
+
+const CREATURE_MODIFIERS = [
+  { kind:"Brutal", type:"damage_add", value:10 },
+  { kind:"Ferocious", type:"damage_add", value:5 },
+  { kind:"Cyborg", type:"damage_add", value:8 },
+  { kind:"Alpha", type:"damage_mul", value:1.5 },
+  { kind:"Savage", type:"damage_add", value:12 },
+
+  { kind:"Poisonous", type:"poison" },
+  { kind:"Radioactive", type:"poison" },
+  { kind:"Venomous", type:"poison" },
+  { kind:"Toxic", type:"poison" },
+  { kind:"Contaminated", type:"poison" },
+
+  { kind:"Hungry", type:"flavor" },
+  { kind:"Wandering", type:"flavor" },
+  { kind:"Ancient", type:"flavor" },
+  { kind:"Blind", type:"flavor" },
+  { kind:"Giant", type:"flavor" },
+  { kind:"Wounded", type:"flavor" },
+  { kind:"Solitary", type:"flavor" },
+  { kind:"Legendary", type:"flavor" },
+  { kind:"Scary", type:"flavor" },
+  { kind:"Slow", type:"flavor" }
+];
+
+function pickCreatureForBiome(rng, biome){
+  const key = BIOME_TO_GROUP[String(biome || "").toLowerCase()] || "green";
+  const pool = CREATURE_GROUPS[key] || CREATURE_GROUPS.green;
+  return pool[Math.floor(rng.next() * pool.length)];
+}
+
+function maybePickCreatureModifier(rng){
+  if(rng.next() > 0.35) return null; // not all creatures get modifiers
+  return CREATURE_MODIFIERS[Math.floor(rng.next() * CREATURE_MODIFIERS.length)];
+}
+
+function initAreaThreatsElementsAndResources(world, rng){
+  for(const a of Object.values(world.map?.areasById || {})){
+    if(!a) continue;
+
+    // Threat class
+    const b = String(a.biome || "").toLowerCase();
+    const threatening = !["plains","woods"].includes(b) && a.id !== 1;
+    a.threatClass = threatening ? "threatening" : "neutral";
+
+    // Threat pool (simple initial version, biome-driven)
+    // Weighting is represented by duplicates in the array.
+    if(threatening){
+      a.threatPool = ["creature_attack","creature_attack","hazard","hazard","hazard"];
+    } else {
+      a.threatPool = ["hazard"];
+    }
+
+    // Active elements list (persistents)
+    if(!Array.isArray(a.activeElements)) a.activeElements = [];
+    a._rewardSpawned = false;
+
+    // 20% chance: special element (creature / rare resource / favorable structure placeholder)
+    if(a.id !== 1 && rng.next() < 0.20){
+      const roll = rng.next();
+      if(roll < 0.55){
+        const base = pickCreatureForBiome(rng, b);
+        const mod = maybePickCreatureModifier(rng);
+        a.activeElements.push({
+          kind: "creature",
+          id: `cre_${a.id}_${Math.floor(rng.next()*1e9)}`,
+          name: base.name,
+          dmgMin: base.dmgMin,
+          dmgMax: base.dmgMax,
+          modifier: mod ? mod.kind : null,
+          modifierType: mod ? mod.type : null,
+          modifierValue: mod ? mod.value ?? null : null
+        });
+      } else if(roll < 0.80){
+        // Rare resource spawn as a real ground item (finite)
+        a.groundItems = Array.isArray(a.groundItems) ? a.groundItems : [];
+        a.groundItems.push({ defId: "capital_ration", qty: 1, meta: { special: true } });
+        a.activeElements.push({ kind:"resource", id:`res_${a.id}_${Math.floor(rng.next()*1e9)}`, name:"Capital Ration" });
+      } else {
+        // Favorable structure placeholder (kept as active element; effects can be added later)
+        const options = [
+          { name:"Safe Cave", biomeOk:["mountain","glacier"] },
+          { name:"Oasis", biomeOk:["desert","caatinga"] },
+          { name:"Fruit Tree", biomeOk:["jungle","forest"] },
+          { name:"Abandoned Industrial Shelter", biomeOk:["industrial"] },
+          { name:"Crystal Spring", biomeOk:["fairy"] }
+        ];
+        const pick = options[Math.floor(rng.next() * options.length)];
+        a.activeElements.push({ kind:"structure", id:`str_${a.id}_${Math.floor(rng.next()*1e9)}`, name: pick.name });
+      }
+    }
+  }
 }
 
 function randomAttrs7(rng){

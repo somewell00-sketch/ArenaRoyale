@@ -276,7 +276,6 @@
     },
     "icon": "🧪"
   },
-
   "net": {
     "id": "net",
     "type": "trap",
@@ -293,7 +292,6 @@
     },
     "icon": "🕸️"
   },
-
   "mine": {
     "id": "mine",
     "type": "trap",
@@ -327,5 +325,120 @@
       "opensIntoLoot": true
     },
     "icon": "🎒"
+  },
+  "wild_fruits": {
+    "id": "wild_fruits",
+    "type": "consumable",
+    "name": "Wild Fruits",
+    "icon": "🍓",
+    "description": "Restores 10 HP immediately when collected.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 10
+    }
+  },
+  "edible_roots": {
+    "id": "edible_roots",
+    "type": "consumable",
+    "name": "Edible Roots",
+    "icon": "🥕",
+    "description": "Restores 15 HP immediately when collected.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 15
+    }
+  },
+  "freshwater_fish": {
+    "id": "freshwater_fish",
+    "type": "consumable",
+    "name": "Freshwater Fish",
+    "icon": "🐟",
+    "description": "Restores 20 HP immediately when collected.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 20
+    }
+  },
+  "capital_ration": {
+    "id": "capital_ration",
+    "type": "consumable",
+    "name": "Capital Ration",
+    "icon": "🥫",
+    "description": "Restores 40 HP immediately when collected. Rare.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 40,
+      "rare": true
+    }
+  },
+  "first_aid_backpack": {
+    "id": "first_aid_backpack",
+    "type": "consumable",
+    "name": "First Aid Backpack",
+    "icon": "🧰",
+    "description": "Restores 30 HP and cures poison immediately when collected.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 30,
+      "curePoison": true
+    }
+  },
+  "survival_kit": {
+    "id": "survival_kit",
+    "type": "consumable",
+    "name": "Survival Kit",
+    "icon": "🧷",
+    "description": "Restores 20 HP and prevents being trapped once (next trap only).",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "healHP": 20,
+      "preventTrapOnce": true
+    }
+  },
+  "stimulant": {
+    "id": "stimulant",
+    "type": "consumable",
+    "name": "Stimulant",
+    "icon": "💉",
+    "description": "Ignores one movement block today.",
+    "damage": null,
+    "uses": 1,
+    "stackable": false,
+    "breaksShield": false,
+    "requirements": {},
+    "effects": {
+      "autoConsumeOnCollect": true,
+      "ignoreMoveBlockToday": true
+    }
   }
 }
