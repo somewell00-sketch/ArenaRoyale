@@ -44,6 +44,28 @@ function actorById(world, id){
   return world.entities.npcs?.[id];
 }
 
+function getEquippedWeapon(entity){
+  const defId = entity?.inventory?.equipped?.weaponDefId || null;
+  if(!defId) return null;
+  const inst = (entity.inventory.items || []).find(it => it.defId === defId) || null;
+  if(!inst) return null;
+  const def = getItemDef(defId);
+  if(!def || def.type !== ItemTypes.WEAPON) return null;
+  return { def, inst };
+}
+
+function computeAttackDamage(seed, day, attacker, target, { forDispute = false } = {}){
+  const w = getEquippedWeapon(attacker);
+  if(!w){
+    const base = 5;
+    const bonus = Math.floor(prng(seed, day, `rpg_bonus_${attacker.id}`) * 4);
+    return { ok:true, dmg: base + bonus, weaponDefId: null, meta: { fists: true } };
+  }
+  const res = computeWeaponDamage(w.def, w.inst.qty, attacker, target, { forDispute });
+  if(!res.ok) return { ok:false, reason: res.reason, dmg:0, weaponDefId: w.def.id, meta:{} };
+  return { ok:true, dmg: res.dmg, weaponDefId: w.def.id, meta: { weapon: w.def.name } };
+}
+
 function prng(seed, day, salt){
   // deterministic 0..1
   let h = 2166136261 >>> 0;
@@ -242,16 +264,7 @@ function applyOnCollect(world, collector, area, itemInst, events){
   if(!def) return { consumed:false };
 
   if(def.effects?.autoConsumeOnCollect){
-    // Restore FP (food/energy)
-    if(def.effects?.restoreFP){
-      const amt = Number(def.effects.restoreFP) || 0;
-      if(amt > 0){
-        collector.fp = Math.min(70, (collector.fp ?? 70) + amt);
-        events.push({ type:"FP_GAIN", who: collector.id, by: "resource", amount: amt, itemDefId: def.id, areaId: area.id });
-      }
-    }
-
-    // Heal HP (medical)
+    // Heal HP
     if(def.effects?.healHP){
       const amt = Number(def.effects.healHP) || 0;
       if(amt > 0){
@@ -887,15 +900,6 @@ export function moveActorOneStep(world, who, toAreaId){
   const area = world.map?.areasById?.[String(to)];
   spawnEnterRewardsIfNeeded(world, area, { seed: world.meta.seed, day: world.meta.day });
 
-  // Creature encounters: if the destination has any creature elements, a creature will attack immediately.
-  // Target selection follows the same ordering rule as daily threats: lowest Perception, tie by initiative.
-  if(area && area.isActive !== false){
-    // If the player is the one entering, always make the creature hit the entrant.
-    // Otherwise, use the usual target rule (lowest Perception, tie by initiative).
-    const forcedTargetId = (who === "player") ? "player" : null;
-    triggerCreatureEncounterOnEnter(world, area, { seed: world.meta.seed, day: world.meta.day, forcedTargetId }, events);
-  }
-
 
   if(who === "player"){
     const v = new Set(world.flags.visitedAreas || []);
@@ -903,57 +907,6 @@ export function moveActorOneStep(world, who, toAreaId){
     world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
   }
   return { ok:true, events };
-}
-
-function triggerCreatureEncounterOnEnter(world, area, { seed, day, forcedTargetId = null }, events){
-  const creatures = (area.activeElements || []).filter(e => e?.kind === "creature");
-  if(!creatures.length) return;
-
-  const present = getAliveActorsInArea(world, area.id);
-  if(present.length === 0) return;
-
-  let target = null;
-  if(forcedTargetId){
-    target = actorById(world, forcedTargetId);
-  }
-  if(!target){
-    // Pick target: lowest Perception, tie by initiative.
-    const scored = present.map(a => ({
-      id: a.id,
-      P: a.attrs?.P ?? 0,
-      init: initiativeScore(seed, day, a.id)
-    })).sort((x,y)=>x.P-y.P || y.init-x.init);
-    target = actorById(world, scored[0].id);
-  }
-  if(!target || (target.hp ?? 0) <= 0) return;
-
-  // Pick one creature deterministically (keeps encounters readable even if multiple creatures exist).
-  const idx = Math.floor(prng(seed + 17, day, `enter_cre_${area.id}_${target.id}`) * creatures.length);
-  const creature = creatures[Math.max(0, Math.min(creatures.length - 1, idx))];
-
-  let dmg = (creature.dmgMin ?? 8) + Math.floor(prng(seed, day, `enter_cre_dmg_${area.id}_${target.id}`) * ((creature.dmgMax ?? 18) - (creature.dmgMin ?? 8) + 1));
-  if(creature.modifierType === "damage_add") dmg += Number(creature.modifierValue) || 0;
-  if(creature.modifierType === "damage_mul") dmg = Math.floor(dmg * (Number(creature.modifierValue) || 1));
-
-  applyDamage(target, dmg);
-  const creatureName = creature.modifier ? `${creature.modifier} ${creature.name}` : (creature.name || "Unknown Creature");
-  const ev = { type:"CREATURE_ATTACK", areaId: area.id, target: target.id, creature: creatureName, dmg, onEnter:true };
-
-  // Poison modifier
-  if(creature.modifierType === "poison"){
-    target.status = target.status || [];
-    if(!(target.status || []).some(s => s?.type === "poison")){
-      target.status.push({ type:"poison", perDay: 10, by:"creature" });
-      events.push({ type:"POISON_APPLIED", who: target.id, by:"creature" });
-      ev.poisonApplied = true;
-    }
-  }
-
-  events.push(ev);
-
-  if((target.hp ?? 0) <= 0){
-    events.push({ type:"DEATH", who: target.id, areaId: target.areaId, reason:"creature" });
-  }
 }
 
 export function endDay(world, npcIntents = [], dayEvents = []){
@@ -977,6 +930,302 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   // Snapshot starting positions for deterministic action resolution (collect disputes).
   const startAreas = { player: next.entities.player.areaId };
   for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
+
+  // --- NPC posture intents (ATTACK/DEFEND/NOTHING/DRINK/SET_TRAP) ---
+  // We resolve posture before movement. Attacks are simultaneous; counter-attack only occurs
+  // if the target also attacked the attacker on the same day.
+  const attackDecl = new Map(); // attackerId -> targetId
+  const defended = new Set();
+
+  for(const act of (npcIntents || [])){
+    if(!act || !act.source) continue;
+    const a = actorById(next, act.source);
+    if(!a || (a.hp ?? 0) <= 0) continue;
+    if((a.trappedDays ?? 0) > 0) continue;
+
+    if(act.type === "DEFEND"){
+      // Shield is represented as a per-day flag. If NPC doesn't have a shield item, it is still
+      // treated as a defensive posture (lower priority than shield mechanics).
+      a._today = a._today || {};
+      a._today.defendedWithShield = true;
+      defended.add(a.id);
+      events.push({ type:"DEFEND", who: a.id, areaId: a.areaId });
+    }
+
+    if(act.type === "DRINK"){
+      const area = next.map.areasById[String(a.areaId)];
+      if(area?.hasWater){
+        const before = Number(a.fp ?? 0);
+        a.fp = Math.min(70, before + 5);
+        a._today = a._today || {};
+        a._today.fed = true;
+        events.push({ type:"DRINK", who: a.id, areaId: a.areaId, fp: a.fp - before });
+      } else {
+        events.push({ type:"DRINK", who: a.id, areaId: a.areaId, ok:false, reason:"no_water" });
+      }
+    }
+
+    if(act.type === "ATTACK"){
+      const targetId = act.payload?.targetId;
+      const t = actorById(next, targetId);
+      if(!t || (t.hp ?? 0) <= 0) continue;
+      if(t.areaId !== a.areaId) continue;
+      if(t._today?.invisible) continue;
+      // If they defended, they can't attack that day.
+      if(a._today?.defendedWithShield) continue;
+      attackDecl.set(a.id, targetId);
+    }
+  }
+
+  // Resolve attacks (simultaneous, with Strength/initiative order for mutual attacks).
+  const alreadyResolved = new Set();
+  function resolveOneWay(attackerId, targetId){
+    const attacker = actorById(next, attackerId);
+    const target = actorById(next, targetId);
+    if(!attacker || !target) return;
+    if((attacker.hp ?? 0) <= 0 || (target.hp ?? 0) <= 0) return;
+    if(attacker.areaId !== target.areaId) return;
+
+    // Shield blocks most weapons.
+    const shielded = !!target._today?.defendedWithShield;
+    const dmgRes = computeAttackDamage(seed, day, attacker, target, { forDispute:false });
+    let dmg = dmgRes.dmg;
+    const weaponDefId = dmgRes.weaponDefId;
+    if(shielded && weaponDefId){
+      const wDef = getItemDef(weaponDefId);
+      if(wDef && isBlockedByShield(wDef)){
+        // Axe breaks shield without damage.
+        if(isAxeShieldBreak(wDef)){
+          target._today.defendedWithShield = false;
+          events.push({ type:"SHIELD_BREAK", by: attackerId, target: targetId, weaponDefId });
+          return;
+        }
+        // Blocked.
+        events.push({ type:"ATTACK_BLOCKED", who: attackerId, target: targetId, weaponDefId });
+        return;
+      }
+    }
+
+    applyDamage(target, dmg);
+    events.push({ type:"ATTACK", who: attackerId, target: targetId, dmg, weaponDefId, areaId: attacker.areaId });
+
+    // Poison weapon check (e.g., blowgun) handled by weapon def.
+    if(weaponDefId){
+      const wDef = getItemDef(weaponDefId);
+      if(wDef && isPoisonWeapon(wDef)){
+        target.status = target.status || [];
+        const already = (target.status || []).some(s => s?.type === "poison");
+        if(!already){
+          target.status.push({ type:"poison", perDay: 10, by: attackerId });
+          events.push({ type:"POISON_APPLIED", who: targetId, by: attackerId });
+        }
+      }
+    }
+
+    if((target.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who: targetId, areaId: attacker.areaId, reason:"combat" });
+      next.flags.killsThisDay = Array.isArray(next.flags.killsThisDay) ? next.flags.killsThisDay : [];
+      next.flags.killsThisDay.push({ deadId: targetId, areaId: attacker.areaId, participants: [attackerId] });
+      attacker.kills = Number(attacker.kills || 0) + 1;
+    }
+  }
+
+  for(const [aId, tId] of attackDecl.entries()){
+    const key = `${aId}|${tId}`;
+    if(alreadyResolved.has(key)) continue;
+
+    // Mutual?
+    if(attackDecl.get(tId) === aId){
+      // Resolve in Strength order. If equal, use initiative.
+      const A = actorById(next, aId);
+      const B = actorById(next, tId);
+      if(!A || !B) continue;
+      const fA = A.attrs?.F ?? 0;
+      const fB = B.attrs?.F ?? 0;
+      let first = aId;
+      let second = tId;
+      if(fB > fA){ first = tId; second = aId; }
+      else if(fA === fB){
+        const iA = initiativeScore(seed, day, aId);
+        const iB = initiativeScore(seed, day, tId);
+        if(iB > iA){ first = tId; second = aId; }
+      }
+
+      resolveOneWay(first, attackDecl.get(first));
+      // If the first strike killed, the second doesn't strike back.
+      const secondActor = actorById(next, second);
+      const firstTarget = attackDecl.get(first);
+      const firstTargetActor = actorById(next, firstTarget);
+      if(secondActor && (secondActor.hp ?? 0) > 0 && firstTargetActor && (firstTargetActor.hp ?? 0) > 0){
+        resolveOneWay(second, attackDecl.get(second));
+      }
+
+      alreadyResolved.add(`${aId}|${tId}`);
+      alreadyResolved.add(`${tId}|${aId}`);
+    } else {
+      resolveOneWay(aId, tId);
+      alreadyResolved.add(key);
+    }
+  }
+
+  // --- 11.x NPC posture intents (ATTACK/DEFEND/DRINK/NOTHING) ---
+  // These happen during the day (before movement). We keep deterministic resolution.
+  const npcAttacks = [];
+  const npcDefends = new Set();
+
+  for(const act of (npcIntents || [])){
+    if(!act || !act.source) continue;
+    const a = actorById(next, act.source);
+    if(!a || (a.hp ?? 0) <= 0) continue;
+    if((a.trappedDays ?? 0) > 0) continue;
+
+    if(act.type === "DEFEND"){
+      // Shield defend only matters if the actor has a shield equipped or in inventory.
+      const hasShield = (a.inventory?.equipped?.defenseDefId === "shield") || (a.inventory?.items || []).some(it => it.defId === "shield");
+      if(hasShield){
+        a._today = a._today || {};
+        a._today.defendedWithShield = true;
+        npcDefends.add(a.id);
+        events.push({ type:"DEFEND", who:a.id, areaId:a.areaId, kind:"shield" });
+      } else {
+        events.push({ type:"DEFEND", who:a.id, areaId:a.areaId, kind:"none" });
+      }
+      continue;
+    }
+
+    if(act.type === "DRINK"){
+      const area = next.map.areasById[String(a.areaId)];
+      if(area?.hasWater){
+        const before = Number(a.fp ?? 0);
+        a.fp = Math.min(70, before + 5);
+        a._today = a._today || {};
+        a._today.fed = true;
+        events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:+5 });
+      } else {
+        events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:0, reason:"no_water" });
+      }
+      continue;
+    }
+
+    if(act.type === "ATTACK"){
+      const targetId = act.payload?.targetId;
+      const t = actorById(next, targetId);
+      if(!t || (t.hp ?? 0) <= 0) continue;
+      if(t.areaId !== a.areaId) continue;
+      if(t._today?.invisible) continue;
+      // If the attacker defended with shield, they can't attack.
+      if(a._today?.defendedWithShield) continue;
+      npcAttacks.push({ attackerId: a.id, targetId: t.id, areaId: a.areaId });
+      continue;
+    }
+  }
+
+  // Resolve attack declarations.
+  // Counter-attack happens only if both attacked each other.
+  const attackKey = (x,y)=>`${x}=>${y}`;
+  const attackMap = new Map(npcAttacks.map(a => [attackKey(a.attackerId, a.targetId), a]));
+  const processedPairs = new Set();
+
+  // First resolve mutual attacks.
+  for(const a of npcAttacks){
+    const bKey = attackKey(a.targetId, a.attackerId);
+    if(!attackMap.has(bKey)) continue;
+    const pairId = [a.attackerId, a.targetId].sort().join("|");
+    if(processedPairs.has(pairId)) continue;
+    processedPairs.add(pairId);
+
+    const A = actorById(next, a.attackerId);
+    const B = actorById(next, a.targetId);
+    if(!A || !B) continue;
+    if((A.hp ?? 0) <= 0 || (B.hp ?? 0) <= 0) continue;
+    if(A.areaId !== B.areaId) continue;
+
+    const strA = A.attrs?.F ?? 0;
+    const strB = B.attrs?.F ?? 0;
+    const initA = initiativeScore(seed, day, A.id);
+    const initB = initiativeScore(seed, day, B.id);
+    const first = (strA !== strB) ? (strA > strB ? A : B) : (initA > initB ? A : B);
+    const second = (first.id === A.id) ? B : A;
+
+    // First hits.
+    const r1 = computeAttackDamage(seed, day, first, second, { forDispute:false });
+    if(r1.ok){
+      // Shield blocks unless weapon breaks/ignores.
+      const blocked = isBlockedByShield(first, second, r1.weaponDefId);
+      if(blocked.blocked){
+        events.push({ type:"ATTACK_BLOCKED", who:first.id, target:second.id, areaId:first.areaId, weaponDefId:r1.weaponDefId });
+      } else {
+        applyDamage(second, r1.dmg);
+        events.push({ type:"ATTACK", who:first.id, target:second.id, areaId:first.areaId, dmg:r1.dmg, weaponDefId:r1.weaponDefId });
+        if(blocked.brokeShield){
+          second._today = second._today || {};
+          second._today.defendedWithShield = false;
+          events.push({ type:"SHIELD_BROKEN", who:second.id, by:first.id, areaId:first.areaId });
+        }
+      }
+    }
+
+    // If second died, no counter-attack.
+    if((second.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who:second.id, areaId:second.areaId, reason:"attack" });
+      killsThisDay.push({ deadId: second.id, areaId: second.areaId, participants: [first.id] });
+      continue;
+    }
+
+    const r2 = computeAttackDamage(seed, day, second, first, { forDispute:false });
+    if(r2.ok){
+      const blocked2 = isBlockedByShield(second, first, r2.weaponDefId);
+      if(blocked2.blocked){
+        events.push({ type:"ATTACK_BLOCKED", who:second.id, target:first.id, areaId:second.areaId, weaponDefId:r2.weaponDefId });
+      } else {
+        applyDamage(first, r2.dmg);
+        events.push({ type:"ATTACK", who:second.id, target:first.id, areaId:second.areaId, dmg:r2.dmg, weaponDefId:r2.weaponDefId });
+        if(blocked2.brokeShield){
+          first._today = first._today || {};
+          first._today.defendedWithShield = false;
+          events.push({ type:"SHIELD_BROKEN", who:first.id, by:second.id, areaId:second.areaId });
+        }
+      }
+    }
+    if((first.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who:first.id, areaId:first.areaId, reason:"attack" });
+      killsThisDay.push({ deadId: first.id, areaId: first.areaId, participants: [second.id] });
+    }
+    if((second.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who:second.id, areaId:second.areaId, reason:"attack" });
+      killsThisDay.push({ deadId: second.id, areaId: second.areaId, participants: [first.id] });
+    }
+  }
+
+  // Resolve one-way attacks (target didn't attack back).
+  for(const a of npcAttacks){
+    if(processedPairs.has([a.attackerId, a.targetId].sort().join("|"))) continue;
+    const attacker = actorById(next, a.attackerId);
+    const target = actorById(next, a.targetId);
+    if(!attacker || !target) continue;
+    if((attacker.hp ?? 0) <= 0 || (target.hp ?? 0) <= 0) continue;
+    if(attacker.areaId !== target.areaId) continue;
+    if(attacker._today?.defendedWithShield) continue;
+
+    const r = computeAttackDamage(seed, day, attacker, target, { forDispute:false });
+    if(!r.ok) continue;
+    const blocked = isBlockedByShield(attacker, target, r.weaponDefId);
+    if(blocked.blocked){
+      events.push({ type:"ATTACK_BLOCKED", who:attacker.id, target:target.id, areaId:attacker.areaId, weaponDefId:r.weaponDefId });
+      continue;
+    }
+    applyDamage(target, r.dmg);
+    events.push({ type:"ATTACK", who:attacker.id, target:target.id, areaId:attacker.areaId, dmg:r.dmg, weaponDefId:r.weaponDefId });
+    if(blocked.brokeShield){
+      target._today = target._today || {};
+      target._today.defendedWithShield = false;
+      events.push({ type:"SHIELD_BROKEN", who:target.id, by:attacker.id, areaId:attacker.areaId });
+    }
+    if((target.hp ?? 0) <= 0){
+      events.push({ type:"DEATH", who:target.id, areaId:target.areaId, reason:"attack" });
+      killsThisDay.push({ deadId: target.id, areaId: target.areaId, participants: [attacker.id] });
+    }
+  }
 
   // --- 6.1 Ground items: resolve COLLECT disputes (before moves) ---
   const collectReqs = [];
@@ -1005,6 +1254,17 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     } else if(act.type === "STAY"){
       events.push({ type:"STAY", who: act.source });
     }
+  }
+
+  // Update NPC memory after movement (cheap variance + limited perception support).
+  for(const npc of Object.values(next.entities.npcs || {})){
+    if(!npc || (npc.hp ?? 0) <= 0) continue;
+    npc.memory = npc.memory || {};
+    npc.memory.visited = Array.isArray(npc.memory.visited) ? npc.memory.visited : [];
+    if(!npc.memory.visited.includes(npc.areaId)) npc.memory.visited.push(npc.areaId);
+    npc.memory.lastAreas = Array.isArray(npc.memory.lastAreas) ? npc.memory.lastAreas : [];
+    npc.memory.lastAreas.unshift(npc.areaId);
+    if(npc.memory.lastAreas.length > 6) npc.memory.lastAreas = npc.memory.lastAreas.slice(0,6);
   }
 
   // After NPC moves, report anyone who moved into the player's area.
