@@ -730,6 +730,10 @@ function renderGame(){
     const dead = (p.hp ?? 0) <= 0;
     if(dead){
       showLeftAlert("You died. Restart the game.");
+      // Show a dedicated game over dialog (e.g., if the area vanished).
+      const a = world?.map?.areasById?.[String(p.areaId)];
+      const reason = (a && a.isActive === false) ? "area_closed" : "death";
+      openDeathDialog({ reason });
       btnDefend.disabled = true;
       btnNothing.disabled = true;
       btnAttack.disabled = true;
@@ -758,13 +762,14 @@ function renderGame(){
 
   btnNothing.onclick = () => {
     if(!world) return;
-    const { nextWorld, events } = commitPlayerAction(world, { kind:"NOTHING" });
+    const kind = "NOTHING";
+    const { nextWorld, events } = commitPlayerAction(world, { kind });
     world = nextWorld;
     uiState.dayEvents.push(...events);
     uiState.phase = "explore";
     saveToLocal(world);
     sync();
-    openResultDialog(events);
+    if(shouldShowActionResult(kind, events)) openResultDialog(events);
   };
 
   btnCollect.onclick = () => {
@@ -858,6 +863,9 @@ function renderGame(){
   mapUI.setData({ world, paletteIndex: 0 });
   sync();
 
+  // Prevent opening multiple death dialogs.
+  if(!uiState.deathDialogShown) uiState.deathDialogShown = false;
+
   function openResultDialog(events){
     const lines = formatEvents(events);
 
@@ -884,6 +892,64 @@ function renderGame(){
 
     // auto-close after 5 seconds
     setTimeout(() => { if(document.body.contains(overlay)) close(); }, 5000);
+  }
+
+  function openDeathDialog({ reason = "death" } = {}){
+    // Avoid stacking dialogs.
+    if(uiState.deathDialogShown) return;
+    uiState.deathDialogShown = true;
+
+    const player = world?.entities?.player;
+    const area = player ? world?.map?.areasById?.[String(player.areaId)] : null;
+    const diedFromClosedArea = (reason === "area_closed") || (area && area.isActive === false);
+
+    const title = "Game over";
+    const msg = diedFromClosedArea
+      ? "Your area vanished. You died."
+      : "You died.";
+
+    const overlay = document.createElement("div");
+    overlay.className = "modalOverlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="h1" style="margin:0;">${title}</div>
+        <div class="muted" style="margin-top:8px;">${msg}</div>
+
+        <div class="row" style="margin-top:14px; justify-content:flex-end; gap:8px;">
+          <button id="restartGame" class="btn danger">Restart</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector("#restartGame").onclick = () => {
+      clearLocal();
+      world = null;
+      overlay.remove();
+      renderStart();
+    };
+  }
+
+  function shouldShowActionResult(kind, events){
+    // Show when the player chose a meaningful action OR something meaningful happened.
+    if(kind !== "NOTHING") return true;
+
+    const notes = (events || []).filter(e => e.type === "NOTHING").map(e => e.note).filter(Boolean);
+    const nonQuietNote = notes.find(n => n !== "quiet_day");
+    if(nonQuietNote) return true;
+
+    const meaningfulTypes = new Set([
+      "DAMAGE_RECEIVED",
+      "DEATH",
+      "SELF_DAMAGE",
+      "POISON_APPLIED",
+      "POISON_TICK",
+      "SHIELD_BLOCK",
+      "SHIELD_BROKEN",
+      "FLASK_REVEAL",
+      "HEAL"
+    ]);
+    return (events || []).some(e => meaningfulTypes.has(e.type));
   }
 
   function formatEvents(events){

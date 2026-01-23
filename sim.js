@@ -511,6 +511,15 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   next.meta.day += 1;
   applyClosuresForDay(next, next.meta.day);
 
+  // If the player's current area is closed after day advancement, the player dies.
+  // This ensures "standing on a vanished area" is treated as an instant death.
+  const playerNow = next.entities.player;
+  const playerAreaNow = next.map.areasById[String(playerNow.areaId)];
+  if(playerAreaNow && playerAreaNow.isActive === false && (playerNow.hp ?? 0) > 0){
+    playerNow.hp = 0;
+    events.push({ type:"DEATH", who:"player", areaId: playerNow.areaId, reason:"area_closed" });
+  }
+
   next.log.days.push({ day, events });
 
   return next;
