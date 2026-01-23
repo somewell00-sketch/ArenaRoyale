@@ -179,36 +179,51 @@ export class MapUI {
       if(!area) continue;
 
       const isVisited = visited.has(c.id);
-      if(!isVisited){
+      const isClosed = (area.isActive === false);
+      const isWarning = (area.willCloseOnDay === (this.world.meta.day + 1));
+
+      // Fill
+      // - Unvisited areas: dark.
+      // - Visited areas: biome color.
+      // - Closed areas ("disappeared"): always render at 10% opacity, even if unvisited.
+      ctx.save();
+      if(isClosed) ctx.globalAlpha = 0.10;
+
+      if(isClosed){
+        ctx.fillStyle = rgbaFromHex(area.color, 1.00);
+      } else if(!isVisited){
         ctx.fillStyle = "#2a2f3a";
       } else {
         ctx.fillStyle = rgbaFromHex(area.color, 1.00);
       }
       drawPath(ctx, c.poly);
       ctx.fill();
+      ctx.restore();
 
-const isClosed = (area.isActive === false);
-const isWarning = (area.willCloseOnDay === (this.world.meta.day + 1));
+      // Border
+      if (isWarning){
+        ctx.strokeStyle = "rgba(220,60,60,0.95)";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      } else if (isClosed){
+        ctx.strokeStyle = "rgba(0,0,0,0.25)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6,4]);
+        ctx.stroke();
+      } else {
+        ctx.strokeStyle = "rgba(0,0,0,0.22)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      }
 
-if (isWarning){
-  ctx.strokeStyle = "rgba(220,60,60,0.95)";
-  ctx.lineWidth = 3;
-  ctx.setLineDash([]);
-  ctx.stroke();
-} else if (isClosed){
-  ctx.strokeStyle = "rgba(0,0,0,0.55)";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6,4]);
-  ctx.stroke();
-} else {
-  ctx.strokeStyle = "rgba(0,0,0,0.22)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([]);
-  ctx.stroke();
-}
-
+      // Labels: keep them, but fade them heavily on closed areas.
+      ctx.save();
+      if(isClosed) ctx.globalAlpha = 0.22;
       if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
       else drawSafeLabel(ctx, c.poly, String(c.id), false);
+      ctx.restore();
     }
 
     // river overlay
