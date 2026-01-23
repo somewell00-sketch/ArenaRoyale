@@ -172,6 +172,15 @@ function renderGame(){
             <button id="clearLocal" class="btn">Clear save</button>
           </div>
         </div>
+
+        <div class="section">
+          <div class="muted">Debug</div>
+          <div class="row" style="margin-top:8px;">
+            <button id="debugAdvance" class="btn">Advance day</button>
+          </div>
+          <div class="muted small" style="margin-top:8px;">HP e área de cada tributo</div>
+          <div id="debugList" class="list" style="max-height:240px; overflow:auto;"></div>
+        </div>
       </aside>
 
       <main class="canvasWrap">
@@ -215,6 +224,8 @@ function renderGame(){
   const infoWater = document.getElementById("infoWater");
   const infoVisited = document.getElementById("infoVisited");
   const infoPhase = document.getElementById("infoPhase");
+
+  const debugList = document.getElementById("debugList");
 
   const youDistrict = document.getElementById("youDistrict");
   const youHP = document.getElementById("youHP");
@@ -275,6 +286,33 @@ function renderGame(){
     youKills.textContent = String(p.kills ?? 0);
     youVisited.textContent = String(world.flags.visitedAreas.length);
 
+    // Debug panel: list all tributes with HP + area.
+    if(debugList){
+      const rows = [];
+      const everyone = [
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0 },
+        ...Object.values(world.entities.npcs || {}).map(n => ({
+          id: n.id,
+          name: n.name,
+          district: n.district,
+          hp: n.hp ?? 100,
+          areaId: n.areaId,
+          dead: (n.hp ?? 0) <= 0,
+        }))
+      ];
+      everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
+      for(const t of everyone){
+        const status = t.dead ? "DEAD" : "ALIVE";
+        rows.push(
+          `<div class="debugRow">
+            <div class="debugName"><strong>${escapeHtml(t.name)}</strong> <span class="muted small">${escapeHtml(districtTag(t.district))}</span></div>
+            <div class="debugMeta"><span class="pill">HP ${escapeHtml(String(t.hp))}</span><span class="pill">Area ${escapeHtml(String(t.areaId))}</span><span class="pill">${status}</span></div>
+          </div>`
+        );
+      }
+      debugList.innerHTML = rows.join("") || `<div class="muted small">—</div>`;
+    }
+
     visitedCount.textContent = `Visited: ${world.flags.visitedAreas.length}`;
 
     const movesLeft = Math.max(0, MAX_MOVES_PER_DAY - uiState.movesUsed);
@@ -315,6 +353,22 @@ function renderGame(){
       ? occ.map(o => `<div class="pill"><strong>${escapeHtml(o.name)}</strong><span>${escapeHtml(districtTag(o.district))}</span></div>`).join("")
       : `<div class="muted small">${reveal ? "No one here" : "Unknown"}</div>`;
 
+    // Debug list: all alive tributes + player.
+    const all = [
+      { id: "player", name: "You", hp: p.hp ?? 100, areaId: p.areaId, district: p.district }
+    ];
+    for(const npc of Object.values(world.entities.npcs || {})){
+      all.push({ id: npc.id, name: npc.name, hp: npc.hp ?? 100, areaId: npc.areaId, district: npc.district });
+    }
+    all.sort((a,b) => (b.hp>0)-(a.hp>0) || a.areaId-b.areaId || a.name.localeCompare(b.name));
+    debugList.innerHTML = all.map(t => {
+      const dead = (t.hp ?? 0) <= 0;
+      return `<div class="debugRow ${dead ? "dead" : ""}">
+        <div class="debugName"><strong>${escapeHtml(t.name)}</strong> <span class="muted small">${escapeHtml(districtTag(t.district))}</span></div>
+        <div class="debugMeta"><span class="pill">HP ${t.hp}</span> <span class="pill">Area ${t.areaId}</span></div>
+      </div>`;
+    }).join("");
+
     mapUI.setData({ world, paletteIndex: 0 });
     mapUI.render();
 
@@ -338,13 +392,37 @@ function renderGame(){
 
     // End day
     const intents = generateNpcIntents(world);
-    world = endDay(world, intents, uiState.dayEvents);
+    const ended = endDay(world, intents, uiState.dayEvents);
+    world = ended;
 
     uiState.focusedAreaId = world.entities.player.areaId;
     resetDayState();
 
     saveToLocal(world);
     sync();
+
+    // Always show who ended up in your area when the day ends.
+    openEndDayDialog(world.log.days[world.log.days.length-1]?.events || []);
+  };
+
+  document.getElementById("debugAdvance").onclick = () => {
+    if(!world) return;
+
+    // If user hasn't committed an action yet, auto-commit NOTHING for testing.
+    if(uiState.phase === "needs_action"){
+      const { nextWorld, events } = commitPlayerAction(world, { kind:"NOTHING" });
+      world = nextWorld;
+      uiState.dayEvents.push(...events);
+      uiState.phase = "explore";
+    }
+
+    const intents = generateNpcIntents(world);
+    world = endDay(world, intents, uiState.dayEvents);
+    uiState.focusedAreaId = world.entities.player.areaId;
+    resetDayState();
+    saveToLocal(world);
+    sync();
+    openEndDayDialog(world.log.days[world.log.days.length-1]?.events || []);
   };
 
   document.getElementById("regen").onclick = () => {
@@ -515,9 +593,46 @@ function renderGame(){
       } else if(e.type === "DEATH"){
         if(e.who === "player") out.push("Você morreu.");
         else out.push(`${npcName(e.who)} morreu.`);
+      } else if(e.type === "ARRIVAL"){
+        out.push(`${npcName(e.who)} chegou na sua área (Area ${e.to}).`);
       }
     }
     return out;
+  }
+
+  function openEndDayDialog(events){
+    const pArea = world.entities.player.areaId;
+    const npcName = (id) => {
+      const n = world?.entities?.npcs?.[id];
+      return n?.name || id;
+    };
+
+    const arrivals = (events || []).filter(e => e.type === "ARRIVAL" && e.to === pArea);
+    const hereNow = Object.values(world.entities.npcs || {})
+      .filter(n => (n.hp ?? 0) > 0 && n.areaId === pArea)
+      .map(n => n.name);
+
+    const overlay = document.createElement("div");
+    overlay.className = "modalOverlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="h1" style="margin:0;">Fim do dia</div>
+        <div class="muted small" style="margin-top:6px;">Resumo do que aconteceu enquanto o dia encerrava.</div>
+
+        <div class="eventList" style="margin-top:12px;">
+          <div class="eventLine"><strong>Sua área:</strong> Area ${pArea}</div>
+          <div class="eventLine"><strong>Quem está na sua área agora:</strong> ${hereNow.length ? escapeHtml(hereNow.join(", ")) : "Ninguém"}</div>
+          <div class="eventLine"><strong>Quem foi para a sua área hoje:</strong> ${arrivals.length ? escapeHtml(arrivals.map(a => npcName(a.who)).join(", ")) : "Ninguém"}</div>
+        </div>
+
+        <div class="row" style="margin-top:14px; justify-content:flex-end;">
+          <button id="ok" class="btn primary">OK</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector("#ok").onclick = () => overlay.remove();
+    setTimeout(() => { if(document.body.contains(overlay)) overlay.remove(); }, 5000);
   }
 }
 

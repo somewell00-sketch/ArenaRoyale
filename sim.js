@@ -170,6 +170,13 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   const day = next.meta.day;
   const events = [...(dayEvents || [])];
 
+  // Track positions to report who moved into the player's area when the day ends.
+  const playerArea = next.entities.player.areaId;
+  const prevNpcAreas = {};
+  for(const npc of Object.values(next.entities.npcs || {})){
+    prevNpcAreas[npc.id] = npc.areaId;
+  }
+
   applyClosuresForDay(next, day);
 
   // NPC movement intents (ignore combat declarations for now)
@@ -184,6 +191,16 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       }
     } else if(act.type === "STAY"){
       events.push({ type:"STAY", who: act.source });
+    }
+  }
+
+  // After NPC moves, report anyone who moved into the player's area.
+  for(const npc of Object.values(next.entities.npcs || {})){
+    if((npc.hp ?? 0) <= 0) continue;
+    const from = prevNpcAreas[npc.id];
+    const to = npc.areaId;
+    if(from !== to && to === playerArea){
+      events.push({ type:"ARRIVAL", who: npc.id, from, to });
     }
   }
 
