@@ -581,6 +581,13 @@ function renderGame(){
           <div class="muted small" style="margin-top:8px;">Entities (HP • area • S/D/P • K)</div>
           <div id="debugList" class="list" style="max-height:320px; overflow:auto;"></div>
 
+          <div class="row" style="margin-top:10px; align-items:center; gap:8px;">
+            <label class="muted small" style="display:inline-flex; align-items:center; gap:8px;">
+              <input id="debugAiToggle" type="checkbox" /> AI metrics
+            </label>
+          </div>
+          <div id="debugAiMetrics" class="muted small" style="margin-top:6px;"></div>
+
           <div class="muted" style="margin-top:12px;">Tools</div>
           <div class="row" style="margin-top:8px; flex-wrap:wrap; gap:8px;">
             <button id="regen" class="btn">New map</button>
@@ -636,6 +643,8 @@ function renderGame(){
   const btnEndDayTrapped = document.getElementById("btnEndDayTrapped");
 
   const debugList = document.getElementById("debugList");
+  const debugAiToggle = document.getElementById("debugAiToggle");
+  const debugAiMetrics = document.getElementById("debugAiMetrics");
 
   const youMetaEl = document.getElementById("youMeta");
   const youPoisonEl = document.getElementById("youPoison");
@@ -1153,6 +1162,23 @@ function renderGame(){
           <div class="debugInv">${invHtml}</div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
+    }
+
+    // Debug AI metrics (toggle)
+    if(debugAiToggle && debugAiMetrics){
+      if(debugAiToggle.checked){
+        const last = Array.isArray(world.log?.days) ? world.log.days[world.log.days.length - 1] : null;
+        const d = last?.debug || null;
+        if(d){
+          debugAiMetrics.innerHTML =
+            `<div>NPCs sharing an area: <strong>${escapeHtml(String(d.sharedNpcCount ?? "—"))}</strong></div>` +
+            `<div>NPC attacks: possible <strong>${escapeHtml(String(d.attacksPossible ?? "—"))}</strong> • executed <strong>${escapeHtml(String(d.attacksExecuted ?? "—"))}</strong></div>`;
+        } else {
+          debugAiMetrics.innerHTML = `<div class="muted small">No metrics for this day yet.</div>`;
+        }
+      } else {
+        debugAiMetrics.innerHTML = "";
+      }
     }
 
     mapUI.setData({ world, paletteIndex: 0 });

@@ -121,14 +121,18 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     // Strong push to collect on day 1–3.
     const baseChance = (day <= 3) ? 0.92 : 0.55;
     // If they have 0–1 items, they are still gearing up.
-    const invBoost = (invN <= 1) ? 0.25 : 0;
+    // Empty-handed tributes are extra motivated to grab *something* (especially a weapon).
+    const invBoost = (invN === 0) ? 0.55 : (invN === 1 ? 0.25 : 0);
     const rForce = hash01(seed, day, `corn_collect|${npc.id}|${invN}|${ground.length}`);
     if(rForce < Math.min(0.98, baseChance + invBoost)){
     const scoredItems = [];
     for(let i=0;i<ground.length;i++){
       const inst = ground[i];
       const def = getItemDef(inst?.defId);
-      scoredItems.push({ idx: i, score: itemValue(def, inst) });
+      const dmg = Number(def?.damage ?? 0);
+      // Cornucopia: empty-handed NPCs strongly prefer damage-capable items first.
+      const firstWeaponBoost = (invN === 0 && dmg > 0) ? 25 : 0;
+      scoredItems.push({ idx: i, score: itemValue(def, inst) + firstWeaponBoost });
     }
     scoredItems.sort((a,b)=>b.score-a.score);
     const topK = scoredItems.slice(0, Math.min(4, scoredItems.length));
@@ -139,6 +143,8 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     // Movement logic uses this to force immediate dispersal.
     npc.memory = npc.memory || {};
     npc.memory._plannedCornCollect = true;
+    // Reset empty-handed attempt counter once they commit to grabbing something.
+    npc.memory.cornEmptyTries = 0;
     return { source: npc.id, type: "COLLECT", payload: { itemIndex: chosen.idx } };
     }
   }
@@ -370,11 +376,24 @@ const adjustedStayScore = stayScore + stayBias;
   // Only ~20% will leave the Cornucopia empty-handed if loot is available.
   const cornHasLoot = (Number(start) === 1) && (hereGround.length > 0);
   const cornEmptyHanded = (Number(start) === 1) && (invCount === 0) && !grabbedCornToday;
+  // Empty-handed exit is only allowed (20%) after at least 2 "tries".
+  // A "try" = starting a day in the Cornucopia empty-handed while loot exists.
+  npc.memory = npc.memory || {};
+  if(cornHasLoot && cornEmptyHanded){
+    npc.memory.cornEmptyTries = Number(npc.memory.cornEmptyTries ?? 0) + 1;
+  } else if(Number(start) === 1 && (invCount > 0 || grabbedCornToday)){
+    npc.memory.cornEmptyTries = 0;
+  }
+  const triesNow = Number(npc.memory.cornEmptyTries ?? 0);
   const cornLeaveEmptyRoll = hash01(seed, day, `corn_leave_empty|${npc.id}|${day}`);
-  const allowLeaveEmpty = cornHasLoot && cornEmptyHanded && (cornLeaveEmptyRoll < 0.20);
+  const allowLeaveEmpty = cornHasLoot && cornEmptyHanded && (triesNow >= 2) && (cornLeaveEmptyRoll < 0.20);
   // If we are empty-handed in the Cornucopia and loot exists, do not force movement
   // unless we rolled the 20% exception or we are explicitly fleeing.
   const cornBlocksForcedMove = cornHasLoot && cornEmptyHanded && !allowLeaveEmpty && !wantsFlee;
+  // If we haven't reached the 2-try threshold yet, block movement outright (loot scramble).
+  if(cornHasLoot && cornEmptyHanded && (triesNow < 2) && !wantsFlee){
+    return { source: npc.id, type: "STAY", payload: { reason: "corn_try" } };
+  }
   const forceMove = (!cornBlocksForcedMove) && (emptyHere || forceLeaveCorn || wantsFlee || (Number(start) === 1 && invCount >= 2 && cornLootLow));
 
   const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
@@ -463,6 +482,23 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
 
   const distanceCost = steps * 0.12;
 
+  // HUNT: healthy + armed NPCs bias toward populated areas (higher chance to find a target).
+  // We use the true world state here to keep behavior punchy; the player only sees diegetic hints.
+  let populationBonus = 0;
+  if(offensive && hpP >= 0.70){
+    let pop = 0;
+    const p2 = world?.entities?.player;
+    if(p2 && (p2.hp ?? 0) > 0 && Number(p2.areaId) === Number(areaId) && !(p2._today?.invisible)) pop++;
+    for(const other of Object.values(world?.entities?.npcs || {})){
+      if(!other || (other.hp ?? 0) <= 0) continue;
+      if(other.id === npc.id) continue;
+      if(Number(other.areaId) !== Number(areaId)) continue;
+      if(other._today?.invisible) continue;
+      pop++;
+    }
+    populationBonus = Math.min(0.45, pop * 0.14);
+  }
+
   const score =
     lootValue * (0.4 + traits.greed) +
     foodValue * (0.35 + needFood) +
@@ -473,7 +509,8 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     crowdPenalty +
     explore -
     recentPenalty +
-    noiseBonus;
+    noiseBonus +
+    populationBonus;
 
   // tiny deterministic jitter to break ties.
   return score + (hash01(seed, day, `area_jitter|${npc.id}|${areaId}`) * 0.01);

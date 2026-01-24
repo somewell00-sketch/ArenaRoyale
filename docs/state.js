@@ -693,24 +693,45 @@ for (let i = 1; i <= npcCount; i++){
   // Initialize threats / active elements / finite resources (special elements)
   initAreaThreatsElementsAndResources(world, rng);
 
-  // Cornucopia starting loot: backpacks = 2/3 of total players
-  // Each backpack contains 2–3 items.
-  const backpacks = Math.max(1, Math.floor((total * 2) / 3));
-  const weaponsPool = ["sword","club","spear","trident","axe","wand","knife","dagger","bow","blowgun","grenade","shield","camouflage","flask"];
+  // Cornucopia starting loot scales with cast size.
+  // Goal: most tributes can grab *something*, and at least ~40% of ground spawns are damage-capable.
+  //
+  // - loose ground spawns: ~0.95 * cast
+  // - backpacks: ~0.60 * cast (each backpack still contains 2–3 items when opened)
+  // - ensure >= 40% of total ground spawns are damage items (weapons/traps with damage) among loose spawns
+  const looseCount = Math.max(6, Math.round(total * 0.95));
+  const backpacks = Math.max(1, Math.floor(total * 0.60));
 
+  const damageLooseTarget = Math.ceil((backpacks + looseCount) * 0.40);
+
+  const DAMAGE_ITEMS = ["sword","club","spear","trident","axe","wand","knife","dagger","bow","blowgun","grenade","mine"];
+  const NON_DAMAGE_ITEMS = ["shield","camouflage","flask","net"];
+
+  // Backpacks
   for(let i=0;i<backpacks;i++){
     a1.groundItems.push({ defId: "backpack", qty: 1, meta: { seedTag: `bp_${i}` } });
   }
-  // A few loose items too
-  const loose = Math.max(3, Math.floor(total / 2));
-  for(let i=0;i<loose;i++){
-    const pick = weaponsPool[Math.floor(rng.next() * weaponsPool.length)];
-    const qty = (pick === "knife" || pick === "dagger") ? (1 + Math.floor(rng.next()*3)) : 1;
+
+  // Loose items
+  let dmgPlaced = 0;
+  for(let i=0;i<looseCount;i++){
+    // First satisfy the damage minimum.
+    const mustPlaceDamage = dmgPlaced < damageLooseTarget;
+    const pool = mustPlaceDamage ? DAMAGE_ITEMS : [...DAMAGE_ITEMS, ...NON_DAMAGE_ITEMS];
+
+    const pick = pool[Math.floor(rng.next() * pool.length)];
+    let qty = 1;
     const meta = {};
+
+    if(pick === "knife" || pick === "dagger"){
+      qty = 1 + Math.floor(rng.next()*3);
+    }
     if(pick === "flask"){
       // Pre-roll what the flask is. Revealed only when consumed.
       meta.hiddenKind = (rng.next() < 0.5) ? "medicine" : "poison";
     }
+    if(DAMAGE_ITEMS.includes(pick)) dmgPlaced += 1;
+
     a1.groundItems.push({ defId: pick, qty, meta });
   }
 

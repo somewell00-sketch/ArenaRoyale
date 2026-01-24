@@ -87,18 +87,13 @@ function updateAreaNoise(world, events, { seed, day }){
       continue;
     }
 
+    // Faster escalation:
+    // - Any occupied area becomes Noisy ("1 day" permanence).
+    // - Highly Noisy if either: concentration (2+ entities) OR a single entity stays 2+ days.
     const concentration = ents.length >= 2;
     const permanence2 = ents.some(e => Number(e.noiseStayDays ?? 1) >= 2);
-    const permanence3 = ents.some(e => Number(e.noiseStayDays ?? 1) >= 3);
-    const isNoisy = concentration || permanence2;
-
-    let nextState = NOISE.QUIET;
-    if(isNoisy) nextState = NOISE.NOISY;
-    if(permanence3) nextState = NOISE.HIGHLY;
-
-    // If it was already noisy and it stays noisy again, it escalates.
-    if(prev === NOISE.NOISY && isNoisy) nextState = NOISE.HIGHLY;
-
+    let nextState = NOISE.NOISY;
+    if(concentration || permanence2) nextState = NOISE.HIGHLY;
     area.noiseState = nextState;
   }
 
@@ -1504,6 +1499,30 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   const startAreas = { player: next.entities.player.areaId };
   for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
 
+  // --- Debug metrics (toggleable in UI) ---
+  // 1) How many NPCs started the day sharing an area with someone else.
+  // 2) Attacks possible vs attacks executed (NPC-only).
+  const npcIdsAtStart = new Set(Object.keys(next.entities.npcs || {}));
+  const aliveAtStart = livingEntities(next);
+  const aliveByAreaStart = new Map();
+  for(const e of aliveAtStart){
+    const aId = String(startAreas[e.id] ?? e.areaId);
+    if(!aliveByAreaStart.has(aId)) aliveByAreaStart.set(aId, []);
+    aliveByAreaStart.get(aId).push(e);
+  }
+
+  let sharedNpcCount = 0;
+  let attacksPossible = 0;
+  for(const npc of Object.values(next.entities.npcs || {})){
+    if((npc.hp ?? 0) <= 0) continue;
+    const aId = String(startAreas[npc.id] ?? npc.areaId);
+    const occupants = aliveByAreaStart.get(aId) || [];
+    const hasOther = occupants.some(o => o.id !== npc.id);
+    if(hasOther) sharedNpcCount += 1;
+    const canAttack = (npc.fp ?? 100) >= 10 && (npc.trappedDays ?? 0) <= 0;
+    if(canAttack && hasOther) attacksPossible += 1;
+  }
+
   // Preserve movement info (used by the laser rule and other end-of-day systems)
   // before we clear per-day flags.
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
@@ -2048,7 +2067,11 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
     events.push({ type:"DEATH", who:"player", areaId: playerNow.areaId, reason:"area_closed" });
   }
 
-  next.log.days.push({ day, events });
+  // Count executed NPC attacks (end-day posture resolution + dispute fights).
+  const npcIds = new Set(Object.keys(next.entities.npcs || {}));
+  const attacksExecuted = events.filter(e => e && e.type === "ATTACK" && npcIds.has(String(e.who)) && e.ok !== false).length;
+
+  next.log.days.push({ day, events, debug: { sharedNpcCount, attacksPossible, attacksExecuted } });
 
   return next;
 }
