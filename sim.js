@@ -771,11 +771,10 @@ export function commitPlayerAction(world, action){
       const startAreas = { player: player.areaId };
       for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
 
-  // RESET_TODAY_FLAGS: clear per-day flags (defend/invisible/fed/etc.).
-  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
-    if(!e) continue;
-    e._today = {};
-  }
+  // IMPORTANT: Do not wipe e._today here.
+  // e._today carries state that must persist through the current day
+  // (e.g., defendedWithShield/invisible/mustFeed). It is reset when the new day
+  // actually begins (after next.meta.day is incremented).
 
       const fight = resolveTieFight(next, best.map(b=>b.id), area.id, { seed, day, killsThisDay: (next.flags?.killsThisDay || (next.flags.killsThisDay=[])), itemDefId: item.defId, startAreas });
       winnerId = fight.winner || null;
@@ -1178,11 +1177,10 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   const startAreas = { player: next.entities.player.areaId };
   for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
 
-  // RESET_TODAY_FLAGS: clear per-day flags (defend/invisible/fed/etc.).
-  for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
-    if(!e) continue;
-    e._today = {};
-  }
+  // NOTE: We intentionally do NOT reset e._today here.
+  // e._today contains state set earlier in the day (e.g., defendedWithShield,
+  // invisible, mustFeed) that must still be available during end-of-day
+  // resolution. Daily flags are reset later when the new day begins.
 
   // --- NPC posture intents (ATTACK/DEFEND/NOTHING/DRINK/SET_TRAP) ---
   // We resolve posture before movement. Attacks are simultaneous; counter-attack only occurs
