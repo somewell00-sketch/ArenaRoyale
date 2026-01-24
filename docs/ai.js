@@ -23,6 +23,7 @@ export function generateNpcIntents(world){
     npc.memory.traits = npc.memory.traits || makeTraits(seed, npc.id, npc.district);
     // Per-day flags (reset each day)
     npc.memory._plannedCornCollect = false;
+    npc.memory._wantsFlee = false;
 
     const traits = npc.memory.traits;
     const obs = buildObservedWorld(world, npc);
@@ -61,6 +62,9 @@ function buildObservedWorld(world, npc){
     : [];
 
   // Observed: current area always. Adjacent area info is only partial and treated as "unknown" unless visited.
+    const wantsFlee = !!npc?.memory?._wantsFlee;
+  const hpP = hpPercent(npc);
+  const offensive = hasDamageItem(npc.inventory);
   const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visited : []);
   const adjacent = adj.map(id => {
     const a = world.map.areasById[String(id)];
@@ -81,6 +85,23 @@ function buildObservedWorld(world, npc){
   });
 
   return { area, hereActors, adjacent };
+}
+
+function hpPercent(entity){
+  const hp = Number(entity?.hp ?? 0);
+  const max = 100;
+  return max > 0 ? (hp / max) : 0;
+}
+
+function hasDamageItem(inv){
+  const items = inv?.items || [];
+  for(const it of items){
+    if(!it) continue;
+    const def = getItemDef(it.defId);
+    const dmg = Number(def?.damage ?? 0);
+    if(dmg > 0 && (def?.type === ItemTypes.WEAPON || def?.type === ItemTypes.TRAP)) return true;
+  }
+  return false;
 }
 
 function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
@@ -168,6 +189,14 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     }
   }
 
+
+  // Injured NPCs avoid combat (System 3)
+  if(hpPercent(npc) < 0.30){
+    npc.memory = npc.memory || {};
+    npc.memory._wantsFlee = true;
+    return { source: npc.id, type: "DEFEND", payload: {} };
+  }
+
   // Attack/Defend/Nothing: evaluate targets in the same area.
   const targets = obs.hereActors
     .map(x => x.entity)
@@ -191,11 +220,26 @@ let bestAttack = null;
     const risk = estimateRisk(world, npc, t);
 
     let score = killChance * (0.9 + traits.aggression) - risk * (0.6 + traits.caution);
+
+    // Aggressiveness by HP (System 3)
+    const hpP = hpPercent(npc);
+    if(hpP >= 0.70) score += 0.20;
+    if(hpP < 0.30) score -= 0.65;
+
     if(hasStrongWeapon) score += 0.55;
     if(sameDistrict) score -= 0.55;
     if(playerDistrictBias) score -= 0.20;
+    // Player interaction (System 3)
+    if(t.id === "player"){
+      const playerW = strongestWeaponInInventory(world?.entities?.player?.inventory);
+      const playerDmg = Number(playerW?.dmg ?? 0);
+      if(hpPercent(npc) >= 0.70) score += 0.15;
+      if(hpPercent(npc) < 0.30 && playerDmg >= 30) score -= 0.55;
+    }
     // Prefer weaker-looking targets.
-    score += clamp01((100 - (t.hp ?? 100)) / 100) * 0.35;
+    // Prefer weaker-looking targets (more if we're healthy).
+    const weakFactor = clamp01((100 - (t.hp ?? 100)) / 100);
+    score += weakFactor * (hpPercent(npc) >= 0.70 ? 0.55 : 0.35);
 
     if(score > bestAttackScore){
       bestAttackScore = score;
@@ -234,7 +278,9 @@ function decideMove(world, npc, obs, traits, { seed, day }){
   const inCornucopia = Number(currentArea?.id) === 1;
   const invCountNow = inventoryCount(npc.inventory);
   const grabbedCornToday = !!npc?.memory?._plannedCornCollect;
-const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visited : []);
+  const wantsFlee = !!npc?.memory?._wantsFlee;
+
+  const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visited : []);
 
   // BFS up to 3 steps, but we score only known areas well. Unknown areas get conservative estimates.
   const start = Number(npc.areaId);
@@ -307,7 +353,7 @@ const adjustedStayScore = stayScore + stayBias;
   // FORCE DISPERSAL: if they grabbed an item today (or already have one) and are in area 1,
   // they should move out immediately (unless trapped).
   const forceLeaveCorn = (Number(start) === 1) && (grabbedCornToday || invCount >= 1);
-  const forceMove = emptyHere || forceLeaveCorn || (Number(start) === 1 && invCount >= 2 && cornLootLow);
+  const forceMove = emptyHere || forceLeaveCorn || wantsFlee || (Number(start) === 1 && invCount >= 2 && cornLootLow);
 
   const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
   const canMove = forceMove || scored.some(s => !s.isStay && (s.score - adjustedStayScore) >= moveThreshold);
@@ -335,11 +381,24 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   // Can't enter water without a bridge.
   if(a.hasWater && !a.hasBridge) return -1e9;
 
-  // Territory noise: NPCs are attracted to noisy zones.
-  // (Noisy: +25% likelihood, Highly noisy: +50% likelihood)
-  // We implement this as a soft score bonus.
+  // Territory noise (System 4)
+  // - Healthy NPCs are attracted to noise (more so if they can deal damage)
+  // - NPCs without damage items tend to avoid noisy zones
+  // - Injured NPCs avoid noise strongly
   const noise = a.noiseState || "quiet";
-  const noiseBonus = (noise === "noisy") ? 0.10 : (noise === "highly_noisy" ? 0.20 : 0);
+  const hpP = hpPercent(npc);
+  const offensive = hasDamageItem(npc.inventory);
+
+  let noiseBonus = 0;
+  if(hpP < 0.30){
+    noiseBonus = (noise === "noisy") ? -0.18 : (noise === "highly_noisy" ? -0.35 : +0.05);
+  } else if(!offensive){
+    noiseBonus = (noise === "noisy") ? -0.06 : (noise === "highly_noisy" ? -0.14 : 0);
+  } else if(hpP >= 0.70){
+    noiseBonus = (noise === "noisy") ? 0.18 : (noise === "highly_noisy" ? 0.32 : 0);
+  } else {
+    noiseBonus = (noise === "noisy") ? 0.10 : (noise === "highly_noisy" ? 0.20 : 0);
+  }
 
   // Hard avoid areas that will vanish tomorrow.
   if(a.willCloseOnDay != null && Number(a.willCloseOnDay) === day + 1) return -999;
