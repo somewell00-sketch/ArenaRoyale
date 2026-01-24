@@ -1,4 +1,4 @@
-import { BIOME_PT, PALETTES } from "./mapgen.js";
+import { BIOME_PT, PALETTES, BIOME_BG } from "./mapgen.js";
 
 function rgbaFromHex(hex, a){
   const h = hex.replace("#","");
@@ -165,7 +165,15 @@ export class MapUI {
     const currentId = this.world.entities.player.areaId;
 
     ctx.clearRect(0,0,W,H);
-    ctx.fillStyle = pal.ocean;
+
+    // Background gradient follows the player's current biome.
+    const curArea = this.world.map?.areasById?.[String(currentId)];
+    const biome = String(curArea?.biome || "").toLowerCase();
+    const bg = BIOME_BG[biome] || BIOME_BG.default || [pal.ocean, pal.ocean];
+    const g = ctx.createRadialGradient(W*0.25, H*0.20, 40, W*0.55, H*0.55, Math.max(W,H));
+    g.addColorStop(0, bg[0]);
+    g.addColorStop(1, bg[1]);
+    ctx.fillStyle = g;
     ctx.fillRect(0,0,W,H);
 
     // clip continente

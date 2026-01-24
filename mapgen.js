@@ -326,6 +326,27 @@ export const PALETTES = [
   }
 ];
 
+// UI-only background gradients per biome.
+// Dark, readable gradients that still feel thematic.
+export const BIOME_BG = {
+  glacier:     ["#050a12", "#13314e"],
+  tundra:      ["#070b10", "#1f3327"],
+  mountain:    ["#07070c", "#223245"],
+  desert:      ["#0b0706", "#3d2b17"],
+  caatinga:    ["#090806", "#2f2a16"],
+  savanna:     ["#080806", "#2d2a12"],
+  plains:      ["#060806", "#1f3318"],
+  woods:       ["#050806", "#163321"],
+  forest:      ["#040806", "#0f3220"],
+  jungle:      ["#040806", "#0a2f23"],
+  fairy:       ["#06060a", "#2a1f3a"],
+  swamp:       ["#040806", "#0f2a26"],
+  lake:        ["#04060a", "#103057"],
+  industrial:  ["#06060a", "#2a2d3a"],
+  // fallback
+  default:     ["#070813", "#0e0f1c"],
+};
+
 function pick(arr, rng){ return arr[Math.floor(rng.next()*arr.length)]; }
 
 function colorForBiome(biome, rng, paletteIndex){

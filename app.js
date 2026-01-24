@@ -82,6 +82,7 @@ const uiState = {
   selectedGroundIndex: null,
   selectionMode: null, // "target" | "item" | null
   leftAlert: null,
+  victoryDialogShown: false,
 };
 
 const MAX_MOVES_PER_DAY = 3;
@@ -432,6 +433,7 @@ function renderStart(){
     uiState.movesUsed = 0;
     uiState.dayEvents = [];
     uiState.deathDialogShown = false;
+    uiState.victoryDialogShown = false;
     renderGame();
   };
 
@@ -459,6 +461,7 @@ function startNewGame(mapSize, totalPlayers, playerDistrict, playerAttrs){
   uiState.dayEvents = [];
   // Allow the death dialog to appear again after restarting.
   uiState.deathDialogShown = false;
+  uiState.victoryDialogShown = false;
 
   saveToLocal(world);
   renderGame();
@@ -1151,6 +1154,23 @@ function renderGame(){
 
     // If player died, lock controls
     const dead = (p.hp ?? 0) <= 0;
+    const everyoneAlive = [
+      { id: "player", hp: p.hp ?? 100 },
+      ...Object.values(world.entities.npcs || {}).map(n => ({ id: n.id, hp: n.hp ?? 100 }))
+    ].filter(x => (x.hp ?? 0) > 0);
+    const playerWon = !dead && (everyoneAlive.length === 1) && (everyoneAlive[0].id === "player");
+
+    if(playerWon){
+      showLeftAlert("Victory. You are the last tribute alive.");
+      openVictoryDialog();
+      btnDefend.disabled = true;
+      btnNothing.disabled = true;
+      if(btnDrink) btnDrink.disabled = true;
+      btnAttack.disabled = true;
+      btnCollect.disabled = true;
+      btnEndDay.disabled = true;
+      return;
+    }
     if(dead){
       showLeftAlert("You died. Restart the game.");
       // Show a dedicated game over dialog (e.g., if the area vanished).
@@ -1357,6 +1377,7 @@ function renderGame(){
 
   // Prevent opening multiple death dialogs.
   if(!uiState.deathDialogShown) uiState.deathDialogShown = false;
+  if(!uiState.victoryDialogShown) uiState.victoryDialogShown = false;
 
   function openResultDialog(events){
     const lines = formatEvents(events);
@@ -1445,6 +1466,34 @@ function renderGame(){
       clearLocal();
       world = null;
       uiState.deathDialogShown = false;
+      overlay.remove();
+      renderStart();
+    };
+  }
+
+  function openVictoryDialog(){
+    if(uiState.victoryDialogShown) return;
+    uiState.victoryDialogShown = true;
+
+    const overlay = document.createElement("div");
+    overlay.className = "modalOverlay";
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="h1" style="margin:0;">Victory</div>
+        <div class="muted" style="margin-top:8px;">Congratulations. You are the last tribute alive.</div>
+
+        <div class="row" style="margin-top:14px; justify-content:flex-end; gap:8px;">
+          <button id="restartGame" class="btn primary">Restart</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector("#restartGame").onclick = () => {
+      clearLocal();
+      world = null;
+      uiState.deathDialogShown = false;
+      uiState.victoryDialogShown = false;
       overlay.remove();
       renderStart();
     };

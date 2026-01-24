@@ -1053,6 +1053,8 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
   if(!def || def.type !== ItemTypes.CONSUMABLE) return { nextWorld: next, events: [{ type:"USE_ITEM", ok:false, reason:"not_consumable" }] };
 
   // Apply effects (data-driven flags)
+  // NOTE: Some resources are marked as autoConsumeOnCollect, but they can also
+  // be found inside backpacks and then used manually from inventory.
   if(def.effects?.invisibleOneDay){
     user._today = user._today || {};
     user._today.invisible = true;
@@ -1084,8 +1086,65 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
       }
     }
   } else {
-    events.push({ type:"USE_ITEM", ok:false, reason:"unhandled" });
-    return { nextWorld: next, events };
+    // Generic consumables (food/healing/etc.)
+    let appliedAny = false;
+
+    // Heal HP
+    if(def.effects?.healHP){
+      const amt = Number(def.effects.healHP) || 0;
+      if(amt > 0){
+        target.hp = Math.min(100, (target.hp ?? 100) + amt);
+        events.push({ type:"HEAL", who: targetId, by: who, amount: amt, itemDefId: def.id });
+        appliedAny = true;
+      }
+    }
+
+    // Restore FP (food/energy)
+    if(def.effects?.healFP){
+      const amt = Number(def.effects.healFP) || 0;
+      if(amt > 0){
+        const before = Number(target.fp ?? 70);
+        target.fp = Math.min(70, before + amt);
+        target._today = target._today || {};
+        target._today.mustFeed = false;
+        target._today.fed = true;
+        events.push({ type:"EAT", who: targetId, areaId: target.areaId, amount: amt, itemDefId: def.id });
+        appliedAny = true;
+      }
+    }
+
+    // Cure poison
+    if(def.effects?.curePoison){
+      const hadPoison = (target.status || []).some(s => s?.type === "poison");
+      if(hadPoison){
+        target.status = (target.status || []).filter(s => s?.type !== "poison");
+        events.push({ type:"POISON_CURED", who: targetId, by: who, itemDefId: def.id, areaId: target.areaId });
+        appliedAny = true;
+      }
+    }
+
+    // Prevent trap once
+    if(def.effects?.preventTrapOnce){
+      target._meta = target._meta || {};
+      target._meta.preventTrapOnce = true;
+      events.push({ type:"BUFF", who: targetId, kind:"prevent_trap_once", itemDefId: def.id, areaId: target.areaId });
+      appliedAny = true;
+    }
+
+    // Ignore move block today
+    if(def.effects?.ignoreMoveBlockToday){
+      target._today = target._today || {};
+      target._today.ignoreMoveBlock = true;
+      events.push({ type:"BUFF", who: targetId, kind:"ignore_move_block_today", itemDefId: def.id, areaId: target.areaId });
+      appliedAny = true;
+    }
+
+    if(!appliedAny){
+      events.push({ type:"USE_ITEM", ok:false, reason:"unhandled" });
+      return { nextWorld: next, events };
+    }
+
+    events.unshift({ type:"USE_ITEM", ok:true, who, itemDefId:def.id });
   }
 
   // Consume one use and remove item
