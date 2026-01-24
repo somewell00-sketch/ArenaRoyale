@@ -126,7 +126,6 @@ export class MapUI {
   }
 
   hitTest(x,y){
-    // brute-force ok
     const cells = this.geom.cells;
     for(let i=cells.length-1; i>=0; i--){
       const c = cells[i];
@@ -166,7 +165,6 @@ export class MapUI {
 
     ctx.clearRect(0,0,W,H);
 
-    // Background gradient follows the player's current biome.
     const curArea = this.world.map?.areasById?.[String(currentId)];
     const biome = String(curArea?.biome || "").toLowerCase();
     const bg = BIOME_BG[biome] || BIOME_BG.default || [pal.ocean, pal.ocean];
@@ -176,12 +174,10 @@ export class MapUI {
     ctx.fillStyle = g;
     ctx.fillRect(0,0,W,H);
 
-    // clip continente
     ctx.save();
     drawPath(ctx, blob);
     ctx.clip();
 
-    // draw cells
     for(const c of cells){
       const area = this.world.map.areasById[String(c.id)];
       if(!area) continue;
@@ -190,10 +186,6 @@ export class MapUI {
       const isClosed = (area.isActive === false);
       const isWarning = (area.willCloseOnDay === (this.world.meta.day + 1));
 
-      // Fill
-      // - Unvisited areas: dark.
-      // - Visited areas: biome color.
-      // - Closed areas ("disappeared"): always render at 10% opacity, even if unvisited.
       ctx.save();
       if(isClosed) ctx.globalAlpha = 0.10;
 
@@ -208,7 +200,6 @@ export class MapUI {
       ctx.fill();
       ctx.restore();
 
-      // Border
       if (isWarning){
         ctx.strokeStyle = "rgba(220,60,60,0.95)";
         ctx.lineWidth = 3;
@@ -229,7 +220,6 @@ export class MapUI {
         ctx.stroke();
       }
 
-      // Labels: keep them, but fade them heavily on closed areas.
       ctx.save();
       if(isClosed) ctx.globalAlpha = 0.22;
       if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
@@ -237,7 +227,6 @@ export class MapUI {
       ctx.restore();
     }
 
-    // river overlay
     if (river?.points?.length){
       const riverColor = pal.biomes.lake?.[0] || "#2a6fb0";
 
@@ -262,7 +251,6 @@ export class MapUI {
       ctx.restore();
     }
 
-    // hover only if visitable
     if(this.hoveredId != null && this.isVisitable(this.hoveredId)){
       const cell = cells.find(x => x.id === this.hoveredId);
       if(cell){
@@ -274,7 +262,6 @@ export class MapUI {
       }
     }
 
-    // current border
     {
       const cell = cells.find(x => x.id === currentId);
       if(cell){
@@ -290,19 +277,18 @@ export class MapUI {
 
     ctx.restore();
 
-    // outline blob
     ctx.strokeStyle = "rgba(255,255,255,0.55)";
     ctx.lineWidth = 2;
     ctx.setLineDash([]);
     drawPath(ctx, blob);
     ctx.stroke();
 
-    // vignette
+    // vignette (FIXED)
     const CX = W/2, CY = H/2;
-    const g = ctx.createRadialGradient(CX,CY,290*0.65, CX,CY, 290*1.55);
-    g.addColorStop(0, "rgba(0,0,0,0)");
-    g.addColorStop(1, "rgba(0,0,0,0.45)");
-    ctx.fillStyle = g;
+    const vg = ctx.createRadialGradient(CX,CY,290*0.65, CX,CY, 290*1.55);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.45)");
+    ctx.fillStyle = vg;
     ctx.fillRect(0,0,W,H);
   }
 
