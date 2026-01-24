@@ -90,12 +90,10 @@ function drawSafeLabel(ctx, poly, label, isEmoji){
 }
 
 export class MapUI {
-  constructor({ canvas, onAreaClick, getCurrentAreaId, canMove }){
+  constructor({ canvas, onAreaClick }){
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.onAreaClick = onAreaClick;
-    this.getCurrentAreaId = getCurrentAreaId || (() => (this.world?.entities?.player?.areaId ?? 1));
-    this.canMove = canMove || (() => true);
 
     this.hoveredId = null;
 
@@ -107,12 +105,12 @@ export class MapUI {
   setData({ world, paletteIndex=0 }){
     this.world = world;
     this.paletteIndex = paletteIndex;
-    this.geom = world?.map?.uiGeom || null;
+    this.geom = world.map.uiGeom;
     this.render();
   }
 
   isVisitable(areaId){
-    const cur = this.getCurrentAreaId();
+    const cur = this.world.entities.player.areaId;
     if (areaId === cur) return true;
     const adj = this.world.map.adjById[String(cur)] || [];
     return adj.includes(areaId);
@@ -138,13 +136,12 @@ export class MapUI {
   handleMove(e){
     const {x,y} = this.canvasToLocal(e);
     const id = this.hitTest(x,y);
-    const enabled = !!this.canMove();
-    const nextHover = (enabled && id != null && this.isVisitable(id)) ? id : null;
+    const nextHover = (id != null && this.isVisitable(id)) ? id : null;
     if(nextHover !== this.hoveredId){
       this.hoveredId = nextHover;
       this.render();
     }
-    this.canvas.style.cursor = (enabled && id != null && this.isVisitable(id)) ? "pointer" : "default";
+    this.canvas.style.cursor = (id != null && this.isVisitable(id)) ? "pointer" : "default";
   }
 
   handleClick(e){
@@ -179,54 +176,19 @@ export class MapUI {
       if(!area) continue;
 
       const isVisited = visited.has(c.id);
-      const isClosed = (area.isActive === false);
-      const isWarning = (area.willCloseOnDay === (this.world.meta.day + 1));
+      const alpha = isVisited ? 1.00 : 0.30;
 
-      // Fill
-      // - Unvisited areas: dark.
-      // - Visited areas: biome color.
-      // - Closed areas ("disappeared"): always render at 10% opacity, even if unvisited.
-      ctx.save();
-      if(isClosed) ctx.globalAlpha = 0.10;
-
-      if(isClosed){
-        ctx.fillStyle = rgbaFromHex(area.color, 1.00);
-      } else if(!isVisited){
-        ctx.fillStyle = "#2a2f3a";
-      } else {
-        ctx.fillStyle = rgbaFromHex(area.color, 1.00);
-      }
+      ctx.fillStyle = rgbaFromHex(area.color, alpha);
       drawPath(ctx, c.poly);
       ctx.fill();
-      ctx.restore();
 
-      // Border
-      if (isWarning){
-        ctx.strokeStyle = "rgba(220,60,60,0.95)";
-        ctx.lineWidth = 3;
-        ctx.setLineDash([]);
-        drawPath(ctx, c.poly);
-        ctx.stroke();
-      } else if (isClosed){
-        ctx.strokeStyle = "rgba(0,0,0,0.25)";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6,4]);
-        drawPath(ctx, c.poly);
-        ctx.stroke();
-      } else {
-        ctx.strokeStyle = "rgba(0,0,0,0.22)";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([]);
-        drawPath(ctx, c.poly);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = "rgba(0,0,0,0.22)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+      ctx.stroke();
 
-      // Labels: keep them, but fade them heavily on closed areas.
-      ctx.save();
-      if(isClosed) ctx.globalAlpha = 0.22;
       if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
       else drawSafeLabel(ctx, c.poly, String(c.id), false);
-      ctx.restore();
     }
 
     // river overlay

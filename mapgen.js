@@ -267,6 +267,28 @@ export const BIOME_PT = {
   swamp: "Pântano",
   lake: "Lago",
   industrial: "Área Industrial"
+
+
+// --- Arena titles (UI) ---
+export const ARENA_TITLES = {
+  regular: "Survival Arena",
+
+  glacier: "Himani Arena",
+  tundra: "Kunlun Arena",
+  mountain: "Orqo Arena",
+  desert: "Sahari Arena",
+  caatinga: "Baraúna Arena",
+  savanna: "Savanaari Arena",
+  plains: "Pampaari Arena",
+  woods: "Aranya Arena",
+  forest: "Ka’aguay Arena",
+  jungle: "Yvapurũ Arena",
+  fairy: "Tianxian Arena",
+  swamp: "Pantanari Arena",
+  lake: "Mayu Arena",
+  industrial: "Karkhan Arena"
+};
+
 };
 
 export const PALETTES = [
@@ -309,6 +331,10 @@ function cellAtPoint(cells, x, y){
 
 export function generateMapData({ seed, regions, width=820, height=820, paletteIndex=0 }){
   const rng = mulberry32(seed);
+
+  // 20% chance de arena temática
+  const themed = rng.next() < 0.20;
+  const dominantBiome = themed ? rng.pick(BIOMES) : null;
 
   const W = width, H = height;
   const CX = W/2, CY = H/2;
@@ -382,6 +408,24 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     adj.set(id, set);
   }
 
+
+  // themed arena: força ~75% das áreas (exceto a #1) para o bioma dominante
+  let forcedDominantIds = null;
+  if (themed && dominantBiome){
+    const total = cells.length;
+    const targetCount = Math.floor(total * 0.75);
+
+    const scored = cells
+      .filter(c => c.id !== 1)
+      .map(c => {
+        const sc = biomeScores(c.features);
+        return { id: c.id, score: sc[dominantBiome] || 0 };
+      })
+      .sort((a,b)=> b.score - a.score);
+
+    forcedDominantIds = new Set(scored.slice(0, targetCount).map(x => x.id));
+  }
+
   // biomes with quotas
   const counts = {};
   for(const b of BIOMES) counts[b] = 0;
@@ -389,13 +433,27 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
   // pass 1
   for(const cell of cells){
     if (cell.id === 1){
+      // área inicial especial
       cell.biome = "fairy";
       counts.fairy++;
       continue;
     }
+
+    // arenas temáticas: ~75% das áreas são do bioma dominante
+    if (themed && dominantBiome && forcedDominantIds?.has(cell.id)){
+      cell.biome = dominantBiome;
+      counts[dominantBiome] = (counts[dominantBiome] || 0) + 1;
+      continue;
+    }
+
     const scores = biomeScores(cell.features);
+
+    // allowed biomes (respeita máximos; em arena temática, o restante exclui o dominante)
     const allowed = new Set();
-    for(const b of BIOMES) if(counts[b] < QUOTAS[b].max) allowed.add(b);
+    for(const b of BIOMES){
+      if (themed && dominantBiome && b === dominantBiome) continue;
+      if(counts[b] < QUOTAS[b].max) allowed.add(b);
+    }
 
     let biome = pickBiomeByScore(scores, rng, allowed);
     if (!allowed.has(biome)) biome = "plains";
@@ -404,50 +462,53 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
   }
 
   // pass 2 ensure mins (simple)
-  const needs = [];
-  for(const b of BIOMES){
-    const deficit = QUOTAS[b].min - counts[b];
-    if(deficit > 0) needs.push([b, deficit]);
-  }
-  needs.sort((a,b)=> b[1]-a[1]);
-
-  function findDonor(){
-    let best=null, slack=0;
+  // Em arenas temáticas, não forçamos mínimos para não destruir a dominância (~75%).
+  if (!themed){
+    const needs = [];
     for(const b of BIOMES){
-      const s = counts[b] - QUOTAS[b].min;
-      if(s > slack){ slack = s; best=b; }
+      const deficit = QUOTAS[b].min - counts[b];
+      if(deficit > 0) needs.push([b, deficit]);
     }
-    return best;
-  }
+    needs.sort((a,b)=> b[1]-a[1]);
 
-  for(const [target, deficit0] of needs){
-    let deficit = deficit0;
-    while(deficit > 0){
-      const donor = findDonor();
-      if(!donor) break;
-
-      // troca a célula doadora que mais combina com target
-      let bestCell = null;
-      let bestGain = -Infinity;
-
-      for(const cell of cells){
-        if(cell.id === 1) continue;
-        if(cell.biome !== donor) continue;
-        if(counts[donor] <= QUOTAS[donor].min) continue;
-
-        const sc = biomeScores(cell.features);
-        const gain = (sc[target] || 0) - (sc[donor] || 0);
-        if(gain > bestGain){
-          bestGain = gain;
-          bestCell = cell;
-        }
+    function findDonor(){
+      let best=null, slack=0;
+      for(const b of BIOMES){
+        const s = counts[b] - QUOTAS[b].min;
+        if(s > slack){ slack = s; best=b; }
       }
+      return best;
+    }
 
-      if(!bestCell) break;
-      counts[donor]--;
-      bestCell.biome = target;
-      counts[target]++;
-      deficit--;
+    for(const [target, deficit0] of needs){
+      let deficit = deficit0;
+      while(deficit > 0){
+        const donor = findDonor();
+        if(!donor) break;
+
+        // troca a célula doadora que mais combina com target
+        let bestCell = null;
+        let bestGain = -Infinity;
+
+        for(const cell of cells){
+          if(cell.id === 1) continue;
+          if(cell.biome !== donor) continue;
+          if(counts[donor] <= QUOTAS[donor].min) continue;
+
+          const sc = biomeScores(cell.features);
+          const gain = (sc[target] || 0) - (sc[donor] || 0);
+          if(gain > bestGain){
+            bestGain = gain;
+            bestCell = cell;
+          }
+        }
+
+        if(!bestCell) break;
+        counts[donor]--;
+        bestCell.biome = target;
+        counts[target]++;
+        deficit--;
+      }
     }
   }
 
@@ -483,10 +544,7 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
       id: c.id,
       biome: c.biome,
       color: c.fillColor,
-      hasWater: !!c.hasWater,
-      // v0: allow traversal across water by treating all water areas as having a bridge.
-      // Keeps the "bridge" mechanic for later without restricting movement now.
-      hasBridge: !!c.hasWater
+      hasWater: !!c.hasWater
     };
     adjById[String(c.id)] = Array.from(adj.get(c.id) || []).sort((a,b)=>a-b);
   }
@@ -503,7 +561,20 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     river: { points: river.points, cellIds: Array.from(riverCellIds) }
   };
 
-  return { areasById, adjById, uiGeom };
+  const arenaTitle = themed
+    ? (ARENA_TITLES[dominantBiome] || ARENA_TITLES.regular)
+    : ARENA_TITLES.regular;
+
+  return {
+    areasById,
+    adjById,
+    uiGeom,
+    arena: {
+      themed,
+      biome: dominantBiome,
+      title: arenaTitle
+    }
+  };
 }
 
 function buildRiver({ rng, cells, adj, width, height, blobRadius }){
