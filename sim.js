@@ -564,7 +564,8 @@ export function commitPlayerAction(world, action){
     // Show NPC attacks in the same area during the action resolution dialog.
     // We resolve NPC posture intents that target the player here (pre-movement),
     // then endDay will skip those already-resolved attacks.
-    if((player.hp ?? 0) <= 0) return finalize();
+    // Nothing else to resolve if the player is already dead.
+    if((player.hp ?? 0) <= 0) return { nextWorld: next, events };
 
     const intents = generateNpcIntents(next) || [];
     const localAttackers = intents
@@ -633,7 +634,8 @@ export function commitPlayerAction(world, action){
       }
     }
 
-    return finalize();
+    // Finalize action resolution.
+    return { nextWorld: next, events };
   }
 
   const player = next.entities.player;
