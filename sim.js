@@ -1817,6 +1817,12 @@ function applyClosuresForDay(world, day){
   // Close anything scheduled for today
   for(const idStr of Object.keys(world.map.areasById || {})){
     const a = world.map.areasById[idStr];
+    // Cornucopia (Area 1) never closes.
+    if(a && Number(a.id) === 1){
+      a.isActive = true;
+      a.willCloseOnDay = null;
+      continue;
+    }
     if(a?.isActive !== false && a?.willCloseOnDay === day){
       a.isActive = false;
       world.flags.closedAreas = Array.from(new Set([...(world.flags.closedAreas||[]), a.id])).sort((x,y)=>x-y);
@@ -1826,7 +1832,7 @@ function applyClosuresForDay(world, day){
   // Starting day 3, every 2 days: mark 4 highest-id active areas (excluding 1) to close next day.
   if(day >= 3 && ((day - 3) % 2 === 0)){
     const active = Object.values(world.map.areasById || {})
-      .filter(a => a && a.id !== 1 && a.isActive !== false);
+      .filter(a => a && Number(a.id) !== 1 && a.isActive !== false);
 
     active.sort((a,b)=>b.id-a.id);
     const toMark = active.slice(0, 4);
