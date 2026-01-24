@@ -1585,19 +1585,22 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   //  - Start: 70
   //  - -10 per day
   //  - If the area has food, eating is automatic and restores to 70
-  //  - If someone starts a day at 0 FP and doesn't eat that day, they die
+  //  - Starvation (new rule): if someone ends the day with FP=0 and the player ends the day
+  //    (presses End Day) while still at 0 FP, they die.
+  //
+  // IMPORTANT: We only kill if the actor already had FP=0 *before* the daily drain.
+  // This matches the desired behavior: "press End Day with 0 FP".
+  const fpWasZeroAtEnd = new Map();
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
+    fpWasZeroAtEnd.set(e.id, Number(e.fp ?? 0) <= 0);
     e.fp = Math.max(0, Number(e.fp ?? 70) - 10);
   }
 
-  // --- Starvation rule (7.1) ---
-  // If an actor started this day at 0 FP (mustFeed=true) and still ends the day at 0 FP
-  // after time drain, they die.
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
-    const mustFeed = !!e._today?.mustFeed && (e._today?.day === day);
-    if(mustFeed && (Number(e.fp ?? 0) <= 0)){
+    const wasZero = fpWasZeroAtEnd.get(e.id) === true;
+    if(wasZero && (Number(e.fp ?? 0) <= 0)){
       e.hp = 0;
       events.push({ type:"DEATH", who: e.id, areaId: e.areaId, reason:"starvation" });
     }

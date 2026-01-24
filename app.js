@@ -569,7 +569,7 @@ function renderGame(){
           <div class="row" style="margin-top:8px;">
             <button id="debugAdvance" class="btn">Advance day</button>
           </div>
-          <div class="muted small" style="margin-top:8px;">Entities (HP • area • S/D/P)</div>
+          <div class="muted small" style="margin-top:8px;">Entities (HP • area • S/D/P • K)</div>
           <div id="debugList" class="list" style="max-height:320px; overflow:auto;"></div>
 
           <div class="muted" style="margin-top:12px;">Tools</div>
@@ -891,7 +891,8 @@ function renderGame(){
     // Header meta: district + attributes + poison
     const a = p.attrs || { F:0, D:0, P:0 };
     if(youMetaEl){
-      youMetaEl.textContent = `D${p.district} • S${a.F} D${a.D} P${a.P}`;
+      const k = Number(p.kills || 0);
+      youMetaEl.textContent = `D${p.district} • S${a.F} D${a.D} P${a.P} • K${k}`;
     }
     const poisoned = (p.status || []).some(s => s?.type === "poison");
     if(youPoisonEl){
@@ -1115,7 +1116,7 @@ function renderGame(){
     // Debug list (compact)
     if(debugList){
       const everyone = [
-        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 70, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs, inv: p.inventory },
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 70, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs, inv: p.inventory, kills: p.kills || 0 },
         ...Object.values(world.entities.npcs || {}).map(n => ({
           id: n.id,
           name: n.name,
@@ -1126,6 +1127,7 @@ function renderGame(){
           dead: (n.hp ?? 0) <= 0,
           attrs: n.attrs,
           inv: n.inventory,
+          kills: n.kills || 0,
         }))
       ];
       everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
@@ -1134,10 +1136,11 @@ function renderGame(){
         const F = t.attrs?.F ?? 0;
         const D = t.attrs?.D ?? 0;
         const P = t.attrs?.P ?? 0;
+        const K = Number(t.kills || 0);
         const invHtml = renderInvPills(t.inv);
         return `<div class="debugCard ${t.dead ? "dead" : ""}">
           <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
-          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 70))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>${status}</span></div>
+          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 70))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>K${escapeHtml(String(K))}</span><span>${status}</span></div>
           <div class="debugInv">${invHtml}</div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
