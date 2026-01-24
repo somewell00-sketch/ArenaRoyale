@@ -489,18 +489,36 @@ textarea{
 .uiTooltip{
   position: fixed;
   z-index: 999;
-  max-width: 340px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(26,20,19,0.96), rgba(17,17,19,0.96));
-  border: 1px solid rgba(250,208,44,0.38);
-  box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+  max-width: 360px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(34,26,24,0.98), rgba(14,14,16,0.98));
+  border: 1px solid rgba(250,208,44,0.55);
+  box-shadow: 0 22px 70px rgba(0,0,0,0.70);
   color: rgba(240,240,242,0.95);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   white-space: pre-line;
   pointer-events: none;
   backdrop-filter: blur(6px);
+}
+
+/* Small (?) helper icon used in the start screen */
+.helpIcon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(250,208,44,0.35);
+  background: rgba(250,208,44,0.10);
+  color: rgba(250,208,44,0.95);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  user-select:none;
 }
 
 /* Slightly stronger affordance when an element has a tooltip */

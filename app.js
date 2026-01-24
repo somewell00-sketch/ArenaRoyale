@@ -192,41 +192,41 @@ function renderStart(){
         <div class="muted">You start at the Cornucopia (Area 1). Each day: first commit an action, then you can move (up to 3 adjacent areas) and finish with End Day.</div>
         <hr class="sep" />
 
-        <div class="h2" style="margin:0 0 6px 0;">Your attributes (7 points)</div>
-        <div class="muted small" style="margin-bottom:10px;">Allocate 7 points across Strength (S), Dexterity (D), and Perception (P). No negatives.</div>
+        <div class="h2" style="margin:0 0 6px 0;">Your attributes (20 points)</div>
+        <div class="muted small" style="margin-bottom:10px;">Allocate 20 points across Strength (S), Dexterity (D), and Perception (P). Each attribute ranges from 0 to 10.</div>
 
         <div class="attrStack">
           <div class="attrRow">
-            <div class="attrRowLabel"><span class="attrName">Strength</span> <span class="muted">(S)</span></div>
+            <div class="attrRowLabel"><span class="attrName">Strength</span> <span class="muted">(S)</span> <span class="helpIcon" data-tooltip="Determines who strikes first when attacks are mutual.">?</span></div>
             <div class="attrRowMin">0</div>
-            <input id="attrF" class="hSlider" type="range" min="0" max="7" step="1" value="3" aria-label="Strength" />
-            <div class="attrRowMax">7</div>
-            <div class="attrRowVal" id="attrFVal">3</div>
+            <input id="attrF" class="hSlider" type="range" min="0" max="10" step="1" value="7" aria-label="Strength" />
+            <div class="attrRowMax">10</div>
+            <div class="attrRowVal" id="attrFVal">7</div>
           </div>
 
           <div class="attrRow">
-            <div class="attrRowLabel"><span class="attrName">Dexterity</span> <span class="muted">(D)</span></div>
+            <div class="attrRowLabel"><span class="attrName">Dexterity</span> <span class="muted">(D)</span> <span class="helpIcon" data-tooltip="Prioritizes item pickups. Some weapons require Dexterity.">?</span></div>
             <div class="attrRowMin">0</div>
-            <input id="attrD" class="hSlider" type="range" min="0" max="7" step="1" value="2" aria-label="Dexterity" />
-            <div class="attrRowMax">7</div>
-            <div class="attrRowVal" id="attrDVal">2</div>
+            <input id="attrD" class="hSlider" type="range" min="0" max="10" step="1" value="7" aria-label="Dexterity" />
+            <div class="attrRowMax">10</div>
+            <div class="attrRowVal" id="attrDVal">7</div>
           </div>
 
           <div class="attrRow">
-            <div class="attrRowLabel"><span class="attrName">Perception</span> <span class="muted">(P)</span></div>
+            <div class="attrRowLabel"><span class="attrName">Perception</span> <span class="muted">(P)</span> <span class="helpIcon" data-tooltip="Helps avoid traps and threats. Low Perception is targeted more often.">?</span></div>
             <div class="attrRowMin">0</div>
-            <input id="attrP" class="hSlider" type="range" min="0" max="7" step="1" value="2" aria-label="Perception" />
-            <div class="attrRowMax">7</div>
-            <div class="attrRowVal" id="attrPVal">2</div>
+            <input id="attrP" class="hSlider" type="range" min="0" max="10" step="1" value="6" aria-label="Perception" />
+            <div class="attrRowMax">10</div>
+            <div class="attrRowVal" id="attrPVal">6</div>
           </div>
 
           <div class="attrTotalRow">
             <div class="attrTotalLabel">Total</div>
-            <div id="attrTotal" class="attrTotalValue">7 / 7</div>
+            <div id="attrTotal" class="attrTotalValue">20 / 20</div>
             <div id="attrHint" class="attrTotalHint">OK</div>
           </div>
 
-          <div class="muted small" style="margin-top:10px;">Tip: when the total is 7, you can only increase one attribute after reducing another.</div>
+          <div class="muted small" style="margin-top:10px;">Tip: when the total is 20, you can only increase one attribute after reducing another.</div>
         </div>
 
         <hr class="sep" />
@@ -270,6 +270,9 @@ function renderStart(){
   const totalEl = document.getElementById("attrTotal");
   const hintEl = document.getElementById("attrHint");
   const enterBtn = document.getElementById("enter");
+
+  const ATTR_MAX = 10;
+  const ATTR_TOTAL = 20;
 
   // Sliders can never exceed a total of 7.
   // If the user tries to increase a slider beyond the available remaining points,
@@ -317,13 +320,13 @@ function renderStart(){
   function updateAttrsUI(){
     const v = readVals();
     let sum = v.F + v.D + v.P;
-    totalEl.textContent = `${sum} / 7`;
+    totalEl.textContent = `${sum} / ${ATTR_TOTAL}`;
 
-    if(sum === 7){
+    if(sum === ATTR_TOTAL){
       hintEl.textContent = "OK";
       enterBtn.disabled = false;
     } else {
-      const diff = 7 - sum;
+      const diff = ATTR_TOTAL - sum;
       hintEl.textContent = diff > 0 ? `Missing ${diff}` : `Reduce ${Math.abs(diff)}`;
       enterBtn.disabled = true;
     }
@@ -331,23 +334,23 @@ function renderStart(){
   }
 
   function onSliderInput(which){
-    // Keep everything as ints 0..7
+    // Keep everything as ints 0..10
     const v = {
-      F: Math.max(0, Math.min(7, Math.round(Number(elF.value) || 0))),
-      D: Math.max(0, Math.min(7, Math.round(Number(elD.value) || 0))),
-      P: Math.max(0, Math.min(7, Math.round(Number(elP.value) || 0))),
+      F: Math.max(0, Math.min(ATTR_MAX, Math.round(Number(elF.value) || 0))),
+      D: Math.max(0, Math.min(ATTR_MAX, Math.round(Number(elD.value) || 0))),
+      P: Math.max(0, Math.min(ATTR_MAX, Math.round(Number(elP.value) || 0))),
     };
 
     let sum = v.F + v.D + v.P;
-    if(sum > 7){
-      const overflow = sum - 7;
+    if(sum > ATTR_TOTAL){
+      const overflow = sum - ATTR_TOTAL;
       // Reduce ONLY the slider the user is currently changing.
       v[which] = Math.max(0, v[which] - overflow);
       writeVals(v);
       sum = v.F + v.D + v.P;
     }
 
-    // Store last valid state (sum <= 7 always holds here).
+    // Store last valid state (sum <= ATTR_TOTAL always holds here).
     lastValid.F = v.F; lastValid.D = v.D; lastValid.P = v.P;
     updateAttrsUI();
   }

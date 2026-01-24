@@ -125,6 +125,52 @@ function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
 }
 
+function applyGrenadeExtras(nextWorld, attacker, target, wDef, events){
+  if(!wDef?.effects?.penetratesShield) return;
+
+  // Grenade always breaks an active shield and still deals damage.
+  if(target?._today?.defendedWithShield){
+    target._today.defendedWithShield = false;
+    events.push({ type:"SHIELD_BROKEN", who: target.id, by: attacker.id, weaponDefId: wDef.id, kind:"grenade" });
+  }
+
+  const targetPerc = Number(target?.attrs?.P ?? 0);
+
+  // Splash: other players in the same area with Perception lower than the target take damage.
+  const splash = Number(wDef.effects?.splashDamage ?? 0);
+  if(splash > 0 && wDef.effects?.splashIfOtherPercBelowTarget){
+    const areaId = attacker.areaId;
+    const all = [nextWorld.entities.player, ...Object.values(nextWorld.entities.npcs || {})];
+    for(const other of all){
+      if(!other || other.id === attacker.id || other.id === target.id) continue;
+      if((other.hp ?? 0) <= 0) continue;
+      if(other.areaId !== areaId) continue;
+      const p = Number(other.attrs?.P ?? 0);
+      if(p < targetPerc){
+        // Splash ignores shield (explosion). We do not strip their shield state; it just hurts.
+        applyDamage(other, splash);
+        events.push({ type:"SPLASH_DAMAGE", who: other.id, by: attacker.id, dmg: splash, weaponDefId: wDef.id, areaId });
+        if((other.hp ?? 0) <= 0){
+          events.push({ type:"DEATH", who: other.id, areaId, reason:"grenade_splash" });
+          nextWorld.flags.killsThisDay = Array.isArray(nextWorld.flags.killsThisDay) ? nextWorld.flags.killsThisDay : [];
+          nextWorld.flags.killsThisDay.push({ deadId: other.id, areaId, participants: [attacker.id], reason: "grenade_splash" });
+          attacker.kills = Number(attacker.kills || 0) + 1;
+        }
+      }
+    }
+  }
+
+  // Extra self damage if the user has lower Perception than the target.
+  const extraSelf = Number(wDef.effects?.selfExtraDamageIfUserPercBelowTarget ?? 0);
+  if(extraSelf > 0){
+    const aPerc = Number(attacker?.attrs?.P ?? 0);
+    if(aPerc < targetPerc){
+      applyDamage(attacker, extraSelf);
+      events.push({ type:"SELF_DAMAGE", who: attacker.id, dmg: extraSelf, weapon: wDef.name, note:"low_perception_splash" });
+    }
+  }
+}
+
 function applyCreatureAttackOnEnter(world, area, target, events, { seed, day }){
   if(!area || !target || (target.hp ?? 0) <= 0) return;
   const creatures = (area.activeElements || []).filter(e => e?.kind === "creature");
@@ -927,6 +973,9 @@ export function commitPlayerAction(world, action){
       events.push({ type:"SELF_DAMAGE", who:"player", dmg: Number(w.effects.selfDamage) || 0, weapon: w.name });
     }
 
+    // Grenade passive splash + conditional extra self-damage (data-driven)
+    if(w) applyGrenadeExtras(next, player, target, w, events);
+
     // Blowgun poison
     if(w && isPoisonWeapon(w)){
       if(!hasStatus(target, "poison")) addStatus(target, { type:"poison", perDay: 10 });
@@ -1210,6 +1259,11 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
     applyDamage(target, dmg);
     events.push({ type:"ATTACK", who: attackerId, target: targetId, dmg, weaponDefId, areaId: attacker.areaId });
+
+    if(weaponDefId){
+      const wDef = getItemDef(weaponDefId);
+      if(wDef) applyGrenadeExtras(next, attacker, target, wDef, events);
+    }
 
     // Poison weapon check (e.g., blowgun) handled by weapon def.
     if(weaponDefId){

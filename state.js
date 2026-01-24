@@ -622,7 +622,7 @@ for (let i = 1; i <= npcCount; i++){
   };
 }
 
-  const resolvedPlayerAttrs = normalizeAttrs7(playerAttrs) || { F: 3, D: 2, P: 2 };
+  const resolvedPlayerAttrs = normalizeAttrs7(playerAttrs) || { F: 7, D: 7, P: 6 };
 
   const world = {
     meta: {
@@ -859,30 +859,41 @@ function initAreaThreatsElementsAndResources(world, rng){
 }
 
 function randomAttrs7(rng){
-  // random non-negative ints summing to 7
-  let F = rng.int(0,7);
-  let D = rng.int(0,7-F);
-  let P = 7 - F - D;
-  // shuffle distribution a bit
-  const arr = [F,D,P];
-  for(let i=2;i>0;i--){
-    const j = Math.floor(rng.next() * (i+1));
-    const t = arr[i]; arr[i]=arr[j]; arr[j]=t;
+  // UPDATED: random non-negative ints summing to 20, each 0..10
+  // (kept function name for backward compatibility across the project)
+  const TOTAL = 20;
+  const MAX = 10;
+
+  // Try a few times to satisfy caps.
+  for(let tries=0; tries<50; tries++){
+    const F = rng.int(0, MAX);
+    const D = rng.int(0, MAX);
+    const P = TOTAL - F - D;
+    if(P < 0 || P > MAX) continue;
+    // Shuffle distribution a bit
+    const arr = [F, D, P];
+    for(let i=2;i>0;i--){
+      const j = Math.floor(rng.next() * (i+1));
+      const t = arr[i]; arr[i]=arr[j]; arr[j]=t;
+    }
+    return { turnDraft: null, F: arr[0], D: arr[1], P: arr[2] };
   }
-  return {
-    turnDraft: null, F: arr[0], D: arr[1], P: arr[2] };
+
+  // Fallback (should be rare): balanced distribution
+  return { turnDraft: null, F: 7, D: 7, P: 6 };
 }
 
 function normalizeAttrs7(input){
+  // UPDATED: sum must be 20, each 0..10
   if(!input) return null;
   const F = Number(input.F);
   const D = Number(input.D);
   const P = Number(input.P);
   if(!Number.isFinite(F) || !Number.isFinite(D) || !Number.isFinite(P)) return null;
-  const f = Math.max(0, Math.floor(F));
-  const d = Math.max(0, Math.floor(D));
-  const p = Math.max(0, Math.floor(P));
-  if(f + d + p !== 7) return null;
+  const f = Math.max(0, Math.min(10, Math.floor(F)));
+  const d = Math.max(0, Math.min(10, Math.floor(D)));
+  const p = Math.max(0, Math.min(10, Math.floor(P)));
+  if(f + d + p !== 20) return null;
   return { F: f, D: d, P: p };
 }
 
