@@ -136,12 +136,17 @@ function hpSignal(hp, key){
 
 function fpSignal(fp, key){
   if(fp <= 0) return "Collapses from exhaustion.";
-  if(fp <= 14) return pickDeterministic([
+  if(fp <= 9) return pickDeterministic([
     "Breathing is labored.",
     "Slow reactions.",
     "Movements are slowing."
   ], key + ":fp:crit");
-  if(fp <= 34) return pickDeterministic([
+  if(fp <= 19) return pickDeterministic([
+    "Barely keeping pace.",
+    "Hands tremble with fatigue.",
+    "Struggling to stay focused."
+  ], key + ":fp:low");
+  if(fp <= 49) return pickDeterministic([
     "Breathing is faster.",
     "Showing signs of fatigue.",
     "Movement is less consistent."
@@ -162,8 +167,8 @@ function tierHP(hp){
 }
 function tierFP(fp){
   if(fp <= 0) return 3;
-  if(fp <= 14) return 2;
-  if(fp <= 34) return 1;
+  if(fp <= 9) return 2;
+  if(fp <= 19) return 1;
   return 0;
 }
 
@@ -904,12 +909,12 @@ function renderGame(){
     }
 
     const hp = clamp(Number(p.hp ?? 100), 0, 100);
-    const fp = clamp(Number(p.fp ?? 70), 0, 70);
+    const fp = clamp(Number(p.fp ?? 100), 0, 100);
     if(youHpTextEl) youHpTextEl.textContent = `${hp}/100`;
-    if(youFpTextEl) youFpTextEl.textContent = `${fp}/70`;
+    if(youFpTextEl) youFpTextEl.textContent = `${fp}/100`;
 
     const hpPct = hp / 100;
-    const fpPct = fp / 70;
+    const fpPct = fp / 100;
     function barClass(pct){
       if(pct >= 0.5) return "good";
       if(pct >= 0.25) return "warn";
@@ -1119,13 +1124,13 @@ function renderGame(){
     // Debug list (compact)
     if(debugList){
       const everyone = [
-        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 70, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs, inv: p.inventory, kills: p.kills || 0 },
+        { id: "player", name: "You", district: p.district, hp: p.hp ?? 100, fp: p.fp ?? 100, areaId: p.areaId, dead: (p.hp ?? 0) <= 0, attrs: p.attrs, inv: p.inventory, kills: p.kills || 0 },
         ...Object.values(world.entities.npcs || {}).map(n => ({
           id: n.id,
           name: n.name,
           district: n.district,
           hp: n.hp ?? 100,
-          fp: n.fp ?? 70,
+          fp: n.fp ?? 100,
           areaId: n.areaId,
           dead: (n.hp ?? 0) <= 0,
           attrs: n.attrs,
@@ -1143,7 +1148,7 @@ function renderGame(){
         const invHtml = renderInvPills(t.inv);
         return `<div class="debugCard ${t.dead ? "dead" : ""}">
           <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
-          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 70))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>K${escapeHtml(String(K))}</span><span>${status}</span></div>
+          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 100))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>K${escapeHtml(String(K))}</span><span>${status}</span></div>
           <div class="debugInv">${invHtml}</div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
@@ -1187,7 +1192,7 @@ function renderGame(){
       btnDefend.disabled = false;
       btnNothing.disabled = false;
       if(btnDrink) btnDrink.disabled = false;
-      btnAttack.disabled = false;
+      btnAttack.disabled = (Number(p.fp ?? 0) < 10);
       // Collect availability handled in renderGroundItem()
       btnEndDay.disabled = false;
     }
@@ -1551,8 +1556,19 @@ function renderGame(){
             else out.push(`You attacked ${npcName(e.target)}${weap} and dealt ${e.dmgDealt} damage.`);
           } else {
             if(e.reason === "target_invisible") out.push("You tried to attack, but the target was invisible.");
+            else if(e.reason === "too_tired") out.push("You are too exhausted to attack.");
             else out.push("You tried to attack, but there was no valid target.");
           }
+          break;
+        }
+        case "FP_COST": {
+          if(e.who !== "player") break;
+          const kind = String(e.kind || "ACTION");
+          const spent = Number(e.spent || 0);
+          const fp = Number(e.fp ?? 0);
+          // Avoid spamming for NOTHING.
+          if(kind === "NOTHING") break;
+          out.push(`You spent ${spent} FP (${kind}). FP is now ${fp}.`);
           break;
         }
         case "DEFEND": {
@@ -1748,6 +1764,50 @@ function renderGame(){
       else if(e.type === "CREATURE_ATTACK") dmgLines.push(`${e.creature} attacked you for ${e.dmg} damage.`);
     }
 
+    // Perception-based world feedback (tactical, but diegetic).
+    const playerArea = Number(world?.entities?.player?.areaId);
+    const links = Array.isArray(world?.map?.links) ? world.map.links : [];
+    const adjacent = new Set();
+    for(const l of links){
+      if(!l) continue;
+      if(Number(l.from) === playerArea) adjacent.add(Number(l.to));
+      if(Number(l.to) === playerArea) adjacent.add(Number(l.from));
+    }
+
+    const sameArea = [];
+    const nearby = [];
+
+    function addOnce(arr, msg){ if(!arr.includes(msg)) arr.push(msg); }
+
+    for(const e of (events || [])){
+      const areaId = Number(e.areaId ?? e.to ?? NaN);
+      const inSame = Number.isFinite(areaId) && areaId === playerArea;
+      const inAdj = Number.isFinite(areaId) && adjacent.has(areaId);
+
+      // Violence / danger signals.
+      if(e.type === "ATTACK" && e.ok !== false){
+        if(inSame) addOnce(sameArea, "You witnessed a fight today.");
+        else if(inAdj) addOnce(nearby, "You hear a fight nearby.");
+      }
+      if(e.type === "CREATURE_ATTACK"){
+        if(inSame) addOnce(sameArea, "Signs of a creature attack are fresh here.");
+        else if(inAdj) addOnce(nearby, "Distant screeches echo nearby.");
+      }
+      if(e.type === "MINE_BLAST"){
+        if(inSame) addOnce(sameArea, "The ground here was disturbed by an explosion.");
+        else if(inAdj) addOnce(nearby, "A dull explosion echoes nearby.");
+      }
+      if(e.type === "NET_TRIGGER"){
+        if(inSame) addOnce(sameArea, "A trap was sprung in this area.");
+        else if(inAdj) addOnce(nearby, "You notice signs of a trap being sprung nearby.");
+      }
+      if(e.type === "DEATH"){
+        if(inAdj) addOnce(nearby, "Someone died nearby today.");
+      }
+    }
+
+    const perceptionLines = [...sameArea, ...nearby];
+
     const overlay = document.createElement("div");
     overlay.className = "modalOverlay";
     overlay.innerHTML = `
@@ -1761,6 +1821,11 @@ function renderGame(){
           <div class="pillWrap" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
             ${deadNames.length ? deadNames.map(n => `<span class="itemPill" style="cursor:default;">${escapeHtml(n)}</span>`).join("") : `<span class="muted small">No deaths today.</span>`}
           </div>
+
+          ${perceptionLines.length ? `
+            <div class="eventLine" style="margin-top:10px;"><strong>What you noticed:</strong></div>
+            ${perceptionLines.map(t => `<div class="eventLine">${escapeHtml(t)}</div>`).join("")}
+          ` : ""}
 
           ${dmgLines.length ? `
             <div class="eventLine" style="margin-top:10px;"><strong>You were hurt as the day ended:</strong></div>

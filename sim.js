@@ -17,6 +17,28 @@ import {
 
 import { generateNpcIntents } from "./ai.js";
 
+// --- Fatigue / Food Points (FP) ---
+// FP is now a core resource.
+// - Max FP: 100
+// - Every action consumes FP
+// - Low FP impacts combat
+//   FP < 20  => -20% damage
+//   FP < 10  => cannot ATTACK (only DEFEND / move / drink / etc.)
+// - No passive regeneration (only food/water/items)
+const FP_MAX = 100;
+
+const FP_COST = {
+  ATTACK: 8,
+  DEFEND: 4,
+  COLLECT: 3,
+  SET_TRAP: 6,
+  NOTHING: 1
+};
+
+// Movement is charged per step (so it matches route totals):
+// 1 step: 4 | 2 steps: 4+3=7 | 3 steps: 4+3+4=11
+const MOVE_STEP_COST = [4, 3, 4];
+
 export function isAdjacent(world, fromId, toId){
   const adj = world.map.adjById[String(fromId)] || [];
   return adj.includes(Number(toId));
@@ -24,7 +46,7 @@ export function isAdjacent(world, fromId, toId){
 
 export function maxSteps(entity){
   const hp = entity.hp ?? 100;
-  const fp = entity.fp ?? 70;
+  const fp = entity.fp ?? FP_MAX;
   if((entity.trappedDays ?? 0) > 0) return 0;
   return (hp > 30 && fp > 20) ? 3 : 1;
 }
@@ -78,16 +100,21 @@ function getWeaponForAttack(entity, { prefer = "equipped", forDispute = false } 
 }
 
 function computeAttackDamage(seed, day, attacker, target, { forDispute = false, weaponPrefer = "equipped", reserveStrongest = false } = {}){
-    const effectivePrefer = reserveStrongest ? "second" : weaponPrefer;
+  if(!canAttackWithFp(attacker)){
+    return { ok:false, reason:"too_tired", dmg:0, weaponDefId:null, meta:{} };
+  }
+
+  const effectivePrefer = reserveStrongest ? "second" : weaponPrefer;
   const w = getWeaponForAttack(attacker, { prefer: effectivePrefer, forDispute });
 if(!w){
     const base = 5;
     const bonus = Math.floor(prng(seed, day, `rpg_bonus_${attacker.id}`) * 4);
-    return { ok:true, dmg: base + bonus, weaponDefId: null, meta: { fists: true } };
+    const raw = base + bonus;
+    return { ok:true, dmg: applyFpDamageModifier(attacker, raw), weaponDefId: null, meta: { fists: true } };
   }
   const res = computeWeaponDamage(w.def, w.inst.qty, attacker, target, { forDispute });
   if(!res.ok) return { ok:false, reason: res.reason, dmg:0, weaponDefId: w.def.id, meta:{} };
-  return { ok:true, dmg: res.dmg, weaponDefId: w.def.id, meta: { weapon: w.def.name } };
+  return { ok:true, dmg: applyFpDamageModifier(attacker, res.dmg), weaponDefId: w.def.id, meta: { weapon: w.def.name } };
 }
 
 function prng(seed, day, salt){
@@ -123,6 +150,27 @@ function initiativeScore(seed, day, actorId){
 
 function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
+}
+
+function clampFp(entity){
+  entity.fp = Math.max(0, Math.min(FP_MAX, Number(entity.fp ?? FP_MAX)));
+}
+
+function spendFp(entity, amount){
+  // amount is positive cost.
+  const before = Number(entity.fp ?? FP_MAX);
+  entity.fp = Math.max(0, before - Math.max(0, Number(amount) || 0));
+  return { before, after: entity.fp, spent: Math.max(0, before - entity.fp) };
+}
+
+function canAttackWithFp(entity){
+  return Number(entity?.fp ?? 0) >= 10;
+}
+
+function applyFpDamageModifier(attacker, dmg){
+  const fp = Number(attacker?.fp ?? 0);
+  if(fp < 20) return Math.floor(dmg * 0.8);
+  return dmg;
 }
 
 function applyGrenadeExtras(nextWorld, attacker, target, wDef, events){
@@ -175,6 +223,15 @@ function applyCreatureAttackOnEnter(world, area, target, events, { seed, day }){
   if(!area || !target || (target.hp ?? 0) <= 0) return;
   const creatures = (area.activeElements || []).filter(e => e?.kind === "creature");
   if(!creatures.length) return;
+
+  // Threats react to movement. Exhausted entrants are more likely to be attacked.
+  const fp = Number(target.fp ?? 0);
+  let chance = 0.55;
+  if(fp < 20) chance += 0.20;
+  if(fp < 10) chance += 0.15;
+  chance = Math.min(0.95, Math.max(0, chance));
+  const roll = prng(seed + 99, day, `enter_attack_roll_${area.id}_${target.id}`);
+  if(roll > chance) return;
 
   // Deterministic choice of which creature attacks.
   const idx = Math.floor(prng(seed + 17, day, `enter_cre_${area.id}_${target.id}`) * creatures.length);
@@ -249,6 +306,71 @@ function dropAllItemsToGround(victim, area){
 function ensureAreaTrapList(area){
   area.traps = Array.isArray(area.traps) ? area.traps : [];
   return area.traps;
+}
+
+function applyTrapsOnEnter(world, area, entrant, events, { day }){
+  // Traps only trigger on movement/entry.
+  // Traps activate only starting the day after being set.
+  if(!area) return;
+  const traps = Array.isArray(area.traps) ? area.traps : [];
+  if(!traps.length) return;
+  const remaining = [];
+
+  for(const t of traps){
+    if(!t || !t.defId) continue;
+    if(Number(t.armedOnDay) > Number(day)){
+      remaining.push(t);
+      continue;
+    }
+
+    // Owner never triggers their own trap.
+    if(t.ownerId && entrant.id === t.ownerId){
+      remaining.push(t);
+      continue;
+    }
+
+    const P = Number(entrant.attrs?.P ?? 0);
+    const spotted = P >= 10;
+
+    if(t.kind === "net"){
+      if(entrant?._meta?.preventTrapOnce){
+        entrant._meta.preventTrapOnce = false;
+        events.push({ type:"NET_TRIGGER", areaId: area.id, caught: [], spared: [entrant.id] });
+        continue;
+      }
+      if(spotted){
+        events.push({ type:"NET_TRIGGER", areaId: area.id, caught: [], spared: [entrant.id] });
+        // Net is still consumed once armed.
+        continue;
+      }
+      entrant.trappedDays = Math.max(entrant.trappedDays ?? 0, 2);
+      events.push({ type:"NET_CAUGHT", who: entrant.id, areaId: area.id, days: 2 });
+      events.push({ type:"NET_TRIGGER", areaId: area.id, caught: [entrant.id], spared: [] });
+      continue;
+    }
+
+    if(t.kind === "mine"){
+      if(spotted){
+        events.push({ type:"MINE_BLAST", injured: [], dead: [] });
+        continue;
+      }
+      applyDamage(entrant, 60);
+      events.push({ type:"MINE_HIT", who: entrant.id, dmg: 60, areaId: area.id });
+      if((entrant.hp ?? 0) <= 0){
+        dropAllItemsToGround(entrant, area);
+        events.push({ type:"DEATH", who: entrant.id, areaId: area.id, reason:"mine" });
+        events.push({ type:"MINE_BLAST", injured: [entrant.id], dead: [entrant.id] });
+      } else {
+        events.push({ type:"MINE_BLAST", injured: [entrant.id], dead: [] });
+      }
+      continue;
+    }
+
+    // Unknown trap kinds are preserved.
+    remaining.push(t);
+  }
+
+  area.traps = remaining;
 }
 
 function applyTrapsAtStartOfDay(world, events, { day }){
@@ -410,8 +532,8 @@ function applyOnCollect(world, collector, area, itemInst, events){
     if(def.effects?.healFP){
       const amt = Number(def.effects.healFP) || 0;
       if(amt > 0){
-        const before = Number(collector.fp ?? 70);
-        collector.fp = Math.min(70, before + amt);
+        const before = Number(collector.fp ?? FP_MAX);
+        collector.fp = Math.min(FP_MAX, before + amt);
         // Counts as "feeding" for starvation prevention.
         collector._today = collector._today || {};
         collector._today.mustFeed = false;
@@ -661,6 +783,25 @@ export function commitPlayerAction(world, action){
 
   const kind = action?.kind || "NOTHING";
 
+  // --- FP costs for actions ---
+  // DRINK / CUT_NET are not charged here.
+  const fpBeforeAction = Number(player.fp ?? FP_MAX);
+  if(kind === "ATTACK" && fpBeforeAction < 10){
+    events.push({ type:"ATTACK", ok:false, reason:"too_tired" });
+    return finalize();
+  }
+  if(FP_COST[kind] != null){
+    const cost = Number(FP_COST[kind]) || 0;
+    const res = spendFp(player, cost);
+    events.push({ type:"FP_COST", who:"player", kind, spent: res.spent, fp: player.fp });
+  }
+
+  // FP gating: too tired to attack.
+  if(kind === "ATTACK" && !canAttackWithFp(player)){
+    events.push({ type:"ATTACK", ok:false, reason:"too_tired" });
+    return finalize();
+  }
+
   const npcsHere = Object.values(next.entities.npcs || {})
     .filter(n => (n.hp ?? 0) > 0 && n.areaId === player.areaId);
 
@@ -681,18 +822,20 @@ export function commitPlayerAction(world, action){
   }
 
   function computeAttackDamage(attacker, target, { forDispute = false } = {}){
+    if(!canAttackWithFp(attacker)) return { ok:false, reason:"too_tired", dmg:0, weaponDefId: null, meta:{} };
     const w = getEquippedWeapon(attacker);
     if(!w){
       // fists
       const base = 5;
       const bonus = Math.floor(prng(seed, day, `rpg_bonus_${attacker.id}`) * 4); // 0..3
-      return { ok:true, dmg: base + bonus, weaponDefId: null, meta: { fists: true } };
+      const raw = base + bonus;
+      return { ok:true, dmg: applyFpDamageModifier(attacker, raw), weaponDefId: null, meta: { fists: true } };
     }
 
     const res = computeWeaponDamage(w.def, w.inst.qty, attacker, target, { forDispute });
     if(!res.ok) return { ok:false, reason: res.reason, dmg:0, weaponDefId: w.def.id, meta:{} };
 
-    return { ok:true, dmg: res.dmg, weaponDefId: w.def.id, meta: { weapon: w.def.name } };
+    return { ok:true, dmg: applyFpDamageModifier(attacker, res.dmg), weaponDefId: w.def.id, meta: { weapon: w.def.name } };
   }
 
   function spendWeaponUse(entity, weaponDefId){
@@ -910,8 +1053,8 @@ export function commitPlayerAction(world, action){
       events.push({ type:"DRINK", ok:false, reason:"no_water" });
       return finalize();
     }
-    const before = Number(player.fp ?? 70);
-    player.fp = Math.min(70, before + 5);
+    const before = Number(player.fp ?? FP_MAX);
+    player.fp = Math.min(FP_MAX, before + 5);
     const gained = Math.max(0, player.fp - before);
     // Drinking counts as feeding for starvation rules
     player._today = player._today || {};
@@ -1103,8 +1246,8 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
     if(def.effects?.healFP){
       const amt = Number(def.effects.healFP) || 0;
       if(amt > 0){
-        const before = Number(target.fp ?? 70);
-        target.fp = Math.min(70, before + amt);
+        const before = Number(target.fp ?? FP_MAX);
+        target.fp = Math.min(FP_MAX, before + amt);
         target._today = target._today || {};
         target._today.mustFeed = false;
         target._today.fed = true;
@@ -1173,6 +1316,18 @@ export function moveActorOneStep(world, who, toAreaId){
   const from = entity.areaId;
   const to = Number(toAreaId);
 
+  // Movement costs FP per step (so multi-step routes match 4/7/11 totals).
+  entity._today = entity._today || {};
+  const already = Number(entity._today.moveSteps || 0);
+  const stepCost = MOVE_STEP_COST[Math.min(already, MOVE_STEP_COST.length - 1)] || MOVE_STEP_COST[MOVE_STEP_COST.length - 1];
+  const fpRes = spendFp(entity, stepCost);
+  entity._today.moveSteps = already + 1;
+  entity._today.moved = true;
+  // Moving cancels defensive/stealth positioning. You always end in the open.
+  entity._today.defendedWithShield = false;
+  entity._today.invisible = false;
+  events.push({ type:"FP_COST", who, kind:"MOVE", spent: fpRes.spent, fp: entity.fp, from, to });
+
   if(!isAreaActive(world, from)){
     events.push({ type:"MOVE_BLOCKED", who, from, to, reason:"start_area_closed" });
     return { ok:false, events };
@@ -1193,6 +1348,9 @@ export function moveActorOneStep(world, who, toAreaId){
   // Finite resource spawns happen on first entry (data-driven).
   const area = world.map?.areasById?.[String(to)];
   spawnEnterRewardsIfNeeded(world, area, { seed: world.meta.seed, day: world.meta.day });
+
+  // Traps only trigger on movement.
+  applyTrapsOnEnter(world, area, entity, events, { day: world.meta.day });
 
   // Creatures present in the area immediately attack anyone who enters.
   applyCreatureAttackOnEnter(world, area, entity, events, { seed: world.meta.seed, day: world.meta.day });
@@ -1255,6 +1413,13 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     if(!a || (a.hp ?? 0) <= 0) continue;
     if((a.trappedDays ?? 0) > 0) continue;
 
+    // Apply FP costs for NPC actions (excluding DRINK).
+    if(FP_COST[act.type] != null){
+      const cost = Number(FP_COST[act.type]) || 0;
+      const res = spendFp(a, cost);
+      events.push({ type:"FP_COST", who: a.id, kind: act.type, spent: res.spent, fp: a.fp, areaId: a.areaId });
+    }
+
     if(act.type === "DEFEND"){
       // Shield is represented as a per-day flag. If NPC doesn't have a shield item, it is still
       // treated as a defensive posture (lower priority than shield mechanics).
@@ -1268,7 +1433,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       const area = next.map.areasById[String(a.areaId)];
       if(area?.hasWater){
         const before = Number(a.fp ?? 0);
-        a.fp = Math.min(70, before + 5);
+        a.fp = Math.min(FP_MAX, before + 5);
         a._today = a._today || {};
         a._today.fed = true;
         events.push({ type:"DRINK", who: a.id, areaId: a.areaId, fp: a.fp - before });
@@ -1277,7 +1442,34 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       }
     }
 
+    if(act.type === "SET_TRAP"){
+      const trapDefId = act.payload?.trapDefId;
+      const def = trapDefId ? getItemDef(trapDefId) : null;
+      if(!def || def.type !== "trap"){
+        events.push({ type:"TRAP_SET", ok:false, who: a.id, reason:"invalid_trap", areaId: a.areaId });
+        continue;
+      }
+      const rem = removeInventoryItem(a.inventory, trapDefId, 1);
+      if(!rem.ok){
+        events.push({ type:"TRAP_SET", ok:false, who: a.id, reason:"missing_item", trapDefId, areaId: a.areaId });
+        continue;
+      }
+      const area = next.map.areasById[String(a.areaId)];
+      if(!area){
+        events.push({ type:"TRAP_SET", ok:false, who: a.id, reason:"missing_area", trapDefId, areaId: a.areaId });
+        continue;
+      }
+      const traps = ensureAreaTrapList(area);
+      const kind = def.effects?.trapKind || trapDefId;
+      traps.push({ defId: trapDefId, kind, ownerId: a.id, armedOnDay: day + 1 });
+      events.push({ type:"TRAP_SET", ok:true, who: a.id, trapDefId, areaId: a.areaId, armedOnDay: day + 1 });
+    }
+
     if(act.type === "ATTACK"){
+      if(!canAttackWithFp(a)){
+        events.push({ type:"ATTACK", who: a.id, target: act.payload?.targetId, areaId: a.areaId, ok:false, reason:"too_tired" });
+        continue;
+      }
       const targetId = act.payload?.targetId;
       const t = actorById(next, targetId);
       if(!t || (t.hp ?? 0) <= 0) continue;
@@ -1417,7 +1609,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       const area = next.map.areasById[String(a.areaId)];
       if(area?.hasWater){
         const before = Number(a.fp ?? 0);
-        a.fp = Math.min(70, before + 5);
+        a.fp = Math.min(FP_MAX, before + 5);
         a._today = a._today || {};
         a._today.fed = true;
         events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:+5 });
@@ -1428,6 +1620,11 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     }
 
     if(act.type === "ATTACK"){
+      if(!canAttackWithFp(a)){
+        const targetId = act.payload?.targetId;
+        events.push({ type:"ATTACK", who: a.id, target: targetId, ok:false, reason:"too_tired", areaId: a.areaId });
+        continue;
+      }
       const targetId = act.payload?.targetId;
       const t = actorById(next, targetId);
       if(!t || (t.hp ?? 0) <= 0) continue;
@@ -1626,7 +1823,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
   // Apply traps (Net / Mine) now that the new day has begun.
   // Traps only activate starting the day after they were set.
-  applyTrapsAtStartOfDay(next, events, { day: next.meta.day });
+  // Traps now trigger only on movement/entry.
 
   // Daily threats: only threatening areas roll when they contain players.
   applyDailyThreats(next, events, { seed: seed, day: next.meta.day });
@@ -1641,9 +1838,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   next.flags.killsThisDay = [];
 
   // --- 7.1 FP maintenance ---
-  //  - Start: 70
+  //  - Start: 100
   //  - -10 per day
-  //  - If the area has food, eating is automatic and restores to 70
+  //  - If the area has food, eating is automatic and restores to 100
   //  - Starvation (new rule): if someone ends the day with FP=0 and the player ends the day
   //    (presses End Day) while still at 0 FP, they die.
   //
@@ -1653,7 +1850,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
     fpWasZeroAtEnd.set(e.id, Number(e.fp ?? 0) <= 0);
-    e.fp = Math.max(0, Number(e.fp ?? 70) - 10);
+    e.fp = Math.max(0, Number(e.fp ?? FP_MAX) - 10);
   }
 
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
@@ -1685,7 +1882,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
 // At the start of the new day:
 // - reset per-day flags
-// - auto-eat in areas with food (restores FP to 70)
+// - auto-eat in areas with food (restores FP to 100)
 // - if FP is 0 and there is no food, mark "mustFeed" for this day (death checked at endDay)
 for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
   if((e.hp ?? 0) <= 0) continue;
@@ -1701,8 +1898,8 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
   const hasFood = !!a?.hasFood;
 
   if(hasFood){
-    if((Number(e.fp ?? 0)) < 70) events.push({ type:"EAT", who: e.id, areaId: e.areaId });
-    e.fp = 70;
+    if((Number(e.fp ?? 0)) < FP_MAX) events.push({ type:"EAT", who: e.id, areaId: e.areaId });
+    e.fp = FP_MAX;
     e._today.fed = true;
   } else {
     if(Number(e.fp ?? 0) <= 0){
@@ -1761,6 +1958,13 @@ function resolveCollectContests(world, collectReqs, events, { seed, day, killsTh
         .filter(x => x.actor && (x.actor.hp ?? 0) > 0 && (startAreas?.[x.who] ?? x.actor.areaId) === area.id);
 
       if(contenders.length === 0) continue;
+
+      // FP cost for attempting to collect (charged regardless of outcome).
+      for(const c of contenders){
+        if(c.who === "player") continue; // player already paid at commit time
+        const res = spendFp(c.actor, FP_COST.COLLECT);
+        events.push({ type:"FP_COST", who: c.who, kind:"COLLECT", spent: res.spent, fp: c.actor.fp, areaId: area.id });
+      }
 
       // Dexterity contest (higher D wins). Tie for best D => weapon fight.
       const scored = contenders.map(c => ({

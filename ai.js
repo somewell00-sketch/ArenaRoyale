@@ -121,6 +121,12 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     return { source: npc.id, type: "DRINK", payload: {} };
   }
 
+  // Very low FP: cannot attack (only DEFEND / DRINK / NOTHING / COLLECT).
+  if((npc.fp ?? 0) < 10){
+    if(hasWater && (npc.fp ?? 0) <= 25) return { source: npc.id, type: "DRINK", payload: {} };
+    return { source: npc.id, type: "DEFEND", payload: {} };
+  }
+
   
   // Low FP: prioritize food. If there is an FP-restoring consumable on the ground, try to collect it.
   if((npc.fp ?? 0) <= 20 && ground.length && invN < INVENTORY_LIMIT){
@@ -413,13 +419,13 @@ function estimateRisk(world, attacker, target){
   }
   const crowd = clamp01(count / 5);
   const hpRisk = clamp01((40 - (attacker.hp ?? 100)) / 40);
-  const fpRisk = clamp01((20 - (attacker.fp ?? 70)) / 20);
+  const fpRisk = clamp01((20 - (attacker.fp ?? 100)) / 20);
   return clamp01(crowd * 0.55 + hpRisk * 0.35 + fpRisk * 0.25);
 }
 
 function fearFactor(npc){
   const hp = npc.hp ?? 100;
-  const fp = npc.fp ?? 70;
+  const fp = npc.fp ?? 100;
   const lowHp = clamp01((35 - hp) / 35);
   const lowFp = clamp01((15 - fp) / 15);
   return clamp01(lowHp * 0.9 + lowFp * 0.6);
@@ -444,7 +450,7 @@ function itemValue(def, inst){
 
 function maxStepsForNpc(npc){
   const hp = npc.hp ?? 100;
-  const fp = npc.fp ?? 70;
+  const fp = npc.fp ?? 100;
   return (hp > 30 && fp > 20) ? 3 : 1;
 }
 
