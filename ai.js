@@ -221,6 +221,11 @@ let bestAttack = null;
 
     let score = killChance * (0.9 + traits.aggression) - risk * (0.6 + traits.caution);
 
+    // Presence pressure: if someone is here, the situation tends to escalate.
+    // This increases same-area fights without making low-HP NPCs suicidal.
+    score += (hpPercent(npc) >= 0.70) ? 0.28 : 0.16;
+    if(hasDamageItem(npc.inventory)) score += 0.10;
+
     // Aggressiveness by HP (System 3)
     const hpP = hpPercent(npc);
     if(hpP >= 0.70) score += 0.20;
@@ -247,7 +252,14 @@ let bestAttack = null;
     }
   }
 
-  const defendScore = 0.35 + traits.caution * 0.45 + fearFactor(npc) * 0.6;
+  let defendScore = 0.35 + traits.caution * 0.45 + fearFactor(npc) * 0.6;
+  // If there is a live target right here, defending becomes less attractive compared to acting.
+  // Healthy NPCs are more willing to take initiative.
+  if(targets.length){
+    const hpP = hpPercent(npc);
+    if(hpP >= 0.70) defendScore -= 0.14;
+    else defendScore -= 0.06;
+  }
   const nothingScore = 0.15;
 
   // If they have no visible targets, bias to defend.
@@ -353,7 +365,17 @@ const adjustedStayScore = stayScore + stayBias;
   // FORCE DISPERSAL: if they grabbed an item today (or already have one) and are in area 1,
   // they should move out immediately (unless trapped).
   const forceLeaveCorn = (Number(start) === 1) && (grabbedCornToday || invCount >= 1);
-  const forceMove = emptyHere || forceLeaveCorn || wantsFlee || (Number(start) === 1 && invCount >= 2 && cornLootLow);
+
+  // Cornucopia rule: NPCs try to grab at least one item before fleeing.
+  // Only ~20% will leave the Cornucopia empty-handed if loot is available.
+  const cornHasLoot = (Number(start) === 1) && (hereGround.length > 0);
+  const cornEmptyHanded = (Number(start) === 1) && (invCount === 0) && !grabbedCornToday;
+  const cornLeaveEmptyRoll = hash01(seed, day, `corn_leave_empty|${npc.id}|${day}`);
+  const allowLeaveEmpty = cornHasLoot && cornEmptyHanded && (cornLeaveEmptyRoll < 0.20);
+  // If we are empty-handed in the Cornucopia and loot exists, do not force movement
+  // unless we rolled the 20% exception or we are explicitly fleeing.
+  const cornBlocksForcedMove = cornHasLoot && cornEmptyHanded && !allowLeaveEmpty && !wantsFlee;
+  const forceMove = (!cornBlocksForcedMove) && (emptyHere || forceLeaveCorn || wantsFlee || (Number(start) === 1 && invCount >= 2 && cornLootLow));
 
   const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
   const canMove = forceMove || scored.some(s => !s.isStay && (s.score - adjustedStayScore) >= moveThreshold);
