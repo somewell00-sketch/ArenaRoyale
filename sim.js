@@ -15,6 +15,8 @@ import {
   isPoisonWeapon
 } from "./items.js";
 
+import { generateNpcIntents } from "./ai.js";
+
 export function isAdjacent(world, fromId, toId){
   const adj = world.map.adjById[String(fromId)] || [];
   return adj.includes(Number(toId));
@@ -331,12 +333,6 @@ function openBackpackIntoInventory(world, owner, area, backpackInstance, events,
       inst.meta.hiddenKind = (prng(seed, day, `bp_flask_${backpackInstance?.meta?.seedTag || ""}_${i}`) < 0.5) ? "medicine" : "poison";
     }
 
-    // Some backpack contents are resources that auto-consume on collect (e.g., First Aid Backpack).
-    const consumed = applyOnCollect(world, owner, area, inst, events);
-    if(consumed.consumed){
-      events.push({ type:"BACKPACK_ITEM", ok:true, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id, note:"consumed_on_open" });
-      continue;
-    }
     const ok = addToInventory(owner.inventory, inst);
     if(ok.ok){
       events.push({ type:"BACKPACK_ITEM", ok:true, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id });
@@ -517,6 +513,83 @@ export function commitPlayerAction(world, action){
   const seed = next.meta.seed;
 
   const events = [];
+
+  function finalize(){
+    // Show NPC attacks in the same area during the action resolution dialog.
+    // We resolve NPC posture intents that target the player here (pre-movement),
+    // then endDay will skip those already-resolved attacks.
+    if((player.hp ?? 0) <= 0) return finalize();
+
+    const intents = generateNpcIntents(next) || [];
+    const localAttackers = intents
+      .filter(it => it && it.type === "ATTACK" && it.payload?.targetId === "player")
+      .map(it => it.source)
+      .filter(id => !!id);
+
+    const uniq = Array.from(new Set(localAttackers))
+      .filter(id => {
+        const a = actorById(next, id);
+        return a && (a.hp ?? 0) > 0 && a.areaId === player.areaId && !(a._today?.defendedWithShield);
+      });
+
+    uniq.sort((a,b)=>initiativeScore(seed, day, b) - initiativeScore(seed, day, a));
+
+    for(const attackerId of uniq){
+      const attacker = actorById(next, attackerId);
+      if(!attacker || (attacker.hp ?? 0) <= 0) continue;
+      if(attacker._today?.attackResolved) continue;
+
+      if(player._today?.invisible) continue;
+
+      const dmgRes = computeAttackDamage(seed, day, attacker, player, { forDispute:false, reserveStrongest:false });
+      let dmg = dmgRes.dmg;
+      const weaponDefId = dmgRes.weaponDefId;
+
+      const shielded = !!player._today?.defendedWithShield;
+      if(shielded && weaponDefId){
+        const wDef = getItemDef(weaponDefId);
+        if(wDef && isBlockedByShield(wDef)){
+          if(isAxeShieldBreak(wDef)){
+            player._today.defendedWithShield = false;
+            events.push({ type:"SHIELD_BREAK", by: attackerId, target: "player", weaponDefId });
+            attacker._today = attacker._today || {};
+            attacker._today.attackResolved = true;
+            continue;
+          }
+          events.push({ type:"ATTACK_BLOCKED", who: attackerId, target: "player", weaponDefId });
+          attacker._today = attacker._today || {};
+          attacker._today.attackResolved = true;
+          continue;
+        }
+      }
+
+      applyDamage(player, dmg);
+      events.push({ type:"ATTACK", who: attackerId, target: "player", dmg, weaponDefId, areaId: player.areaId });
+
+      if(weaponDefId){
+        const wDef = getItemDef(weaponDefId);
+        if(wDef && isPoisonWeapon(wDef)){
+          player.status = player.status || [];
+          const already = (player.status || []).some(s => s?.type === "poison");
+          if(!already){
+            player.status.push({ type:"poison", perDay: 10, by: attackerId });
+            events.push({ type:"POISON_APPLIED", who: "player", by: attackerId });
+          }
+        }
+      }
+
+      attacker._today = attacker._today || {};
+      attacker._today.attackResolved = true;
+
+      if((player.hp ?? 0) <= 0){
+        events.push({ type:"DEATH", who:"player", areaId: player.areaId, reason:"combat" });
+        break;
+      }
+    }
+
+    return finalize();
+  }
+
   const player = next.entities.player;
   if((player.hp ?? 0) <= 0){
     events.push({ type:"NO_ACTION", reason:"player_dead" });
@@ -529,7 +602,7 @@ export function commitPlayerAction(world, action){
     const kind = action?.kind || "NOTHING";
     if(kind !== "CUT_NET"){
       events.push({ type:"TRAPPED", days: player.trappedDays, areaId: player.areaId });
-      return { nextWorld: next, events };
+      return finalize();
     }
   }
 
@@ -601,14 +674,14 @@ export function commitPlayerAction(world, action){
     const area = next.map.areasById[String(player.areaId)];
     if(!area || !Array.isArray(area.groundItems) || area.groundItems.length === 0){
       events.push({ type:"COLLECT", ok:false, reason:"no_item" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     const idx = Number(action?.itemIndex ?? 0);
     const item = area.groundItems[idx] ?? area.groundItems[0];
     if(!item){
       events.push({ type:"COLLECT", ok:false, reason:"missing_item" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     // Determine NPC contenders who are also trying to collect this same ground item today.
@@ -664,7 +737,7 @@ export function commitPlayerAction(world, action){
     const winner = winnerId ? actorById(next, winnerId) : null;
     if(!winner || (winner.hp ?? 0) <= 0){
       events.push({ type:"COLLECT", ok:false, reason:"no_winner", itemDefId: item.defId, areaId: area.id });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     // Remove the item from the ground now (it is claimed by the winner).
@@ -676,7 +749,7 @@ export function commitPlayerAction(world, action){
       openBackpackIntoInventory(next, winner, area, removed, lootEvents, { seed, day });
       events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId:"backpack", qty:1, areaId: area.id, note:"opened" });
       events.push(...lootEvents);
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     // Normal item pickup.
@@ -685,18 +758,18 @@ export function commitPlayerAction(world, action){
     const consumed = applyOnCollect(next, winner, area, removed, events);
     if(consumed.consumed){
       events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id, note:"consumed_on_collect" });
-      return { nextWorld: next, events };
+      return finalize();
     }
     const ok = addToInventory(winner.inventory, removed);
     if(!ok.ok){
       // Can't take: drop it back to ground (end) and report.
       area.groundItems.push(removed);
       events.push({ type:"COLLECT", ok:false, who: winnerId, reason:"inventory_full", itemDefId: removed.defId, areaId: area.id });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   if(kind === "SET_TRAP"){
@@ -704,26 +777,26 @@ export function commitPlayerAction(world, action){
     const def = trapDefId ? getItemDef(trapDefId) : null;
     if(!def || def.type !== "trap"){
       events.push({ type:"TRAP_SET", ok:false, reason:"invalid_trap" });
-      return { nextWorld: next, events };
+      return finalize();
     }
     // Consume one trap item from inventory.
     const rem = removeInventoryItem(player.inventory, trapDefId, 1);
     if(!rem.ok){
       events.push({ type:"TRAP_SET", ok:false, reason:"missing_item", trapDefId });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     const area = next.map.areasById[String(player.areaId)];
     if(!area){
       events.push({ type:"TRAP_SET", ok:false, reason:"missing_area", trapDefId });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     const traps = ensureAreaTrapList(area);
     const kind = def.effects?.trapKind || trapDefId;
     traps.push({ defId: trapDefId, kind, ownerId: "player", armedOnDay: day + 1 });
     events.push({ type:"TRAP_SET", ok:true, trapDefId, areaId: player.areaId, armedOnDay: day + 1 });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   if(kind === "CUT_NET"){
@@ -731,12 +804,12 @@ export function commitPlayerAction(world, action){
     const hasDagger = (player.inventory?.items || []).some(it => it.defId === "dagger" && (it.qty || 1) > 0);
     if(!hasDagger){
       events.push({ type:"CUT_NET", ok:false, reason:"no_dagger" });
-      return { nextWorld: next, events };
+      return finalize();
     }
     removeInventoryItem(player.inventory, "dagger", 1);
     player.trappedDays = 0;
     events.push({ type:"CUT_NET", ok:true, areaId: player.areaId });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   if(kind === "DEFEND"){
@@ -751,14 +824,14 @@ export function commitPlayerAction(world, action){
 
     if(!npcsHere.length){
       events.push({ type:"INFO", msg:"No threats nearby." });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     // 50% chance of being attacked while defending
     const attacked = prng(seed, day, "def_atk") < 0.5;
     if(!attacked){
       events.push({ type:"INFO", msg:"No one attacked you." });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     const attacker = pickRandomNpc("def_attacker");
@@ -780,14 +853,14 @@ export function commitPlayerAction(world, action){
       events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg: incoming });
       if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
     }
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   if(kind === "DRINK"){
     const area = next.map?.areasById?.[String(player.areaId)];
     if(!area?.hasWater){
       events.push({ type:"DRINK", ok:false, reason:"no_water" });
-      return { nextWorld: next, events };
+      return finalize();
     }
     const before = Number(player.fp ?? 70);
     player.fp = Math.min(70, before + 5);
@@ -797,7 +870,7 @@ export function commitPlayerAction(world, action){
     player._today.fed = true;
     player._today.mustFeed = false;
     events.push({ type:"DRINK", ok:true, gained, fp: player.fp, areaId: player.areaId });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   if(kind === "ATTACK"){
@@ -806,19 +879,19 @@ export function commitPlayerAction(world, action){
 
     if(!target || (target.hp ?? 0) <= 0 || target.areaId !== player.areaId){
       events.push({ type:"ATTACK", ok:false, reason:"no_valid_target" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     // Camouflage: you cannot be attacked, but can still attack.
     if(target._today?.invisible){
       events.push({ type:"ATTACK", ok:false, reason:"target_invisible" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     const atk = computeAttackDamage(player, target);
     if(!atk.ok){
       events.push({ type:"ATTACK", ok:false, reason: atk.reason || "requirements" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     let dmg = atk.dmg;
@@ -872,7 +945,7 @@ export function commitPlayerAction(world, action){
       events.push({ type:"DEATH", who: "player", areaId: player.areaId });
     }
 
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   // NOTHING
@@ -887,14 +960,14 @@ export function commitPlayerAction(world, action){
     if(player._today?.invisible){
       dmg = 0;
       events.push({ type:"NOTHING", ok:true, note:"camouflage_prevented_attack" });
-      return { nextWorld: next, events };
+      return finalize();
     }
 
     applyDamage(player, dmg);
     events.push({ type:"NOTHING", ok:true, note:"caught_off_guard" });
     events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg });
     if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   // Environmental hazard chance even if alone.
@@ -904,11 +977,11 @@ export function commitPlayerAction(world, action){
     events.push({ type:"NOTHING", ok:true });
     events.push({ type:"DAMAGE_RECEIVED", from:"environment", dmg });
     if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
-    return { nextWorld: next, events };
+    return finalize();
   }
 
   events.push({ type:"NOTHING", ok:true, note:"quiet_day" });
-  return { nextWorld: next, events };
+  return finalize();
 }
 
 export function useInventoryItem(world, who, itemIndex, targetId = who){
@@ -928,69 +1001,13 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
   const def = getItemDef(it.defId);
   if(!def || def.type !== ItemTypes.CONSUMABLE) return { nextWorld: next, events: [{ type:"USE_ITEM", ok:false, reason:"not_consumable" }] };
 
-  // Apply effects (data-driven).
-  // Notes:
-  // - Some consumables are auto-consumed on collect, but they can still exist in inventory (e.g., from backpacks).
-  // - This handler supports the same effect flags as applyOnCollect().
-  let handled = false;
-
+  // Apply effects (data-driven flags)
   if(def.effects?.invisibleOneDay){
     user._today = user._today || {};
     user._today.invisible = true;
     events.push({ type:"USE_ITEM", ok:true, who, itemDefId:def.id });
     events.push({ type:"INVISIBLE", who });
-    handled = true;
-  }
-
-  // Generic heals / cures
-  if(!handled && (def.effects?.healHP || def.effects?.healFP || def.effects?.curePoison || def.effects?.preventTrapOnce || def.effects?.ignoreMoveBlockToday)){
-    // Heal HP
-    if(def.effects?.healHP){
-      const amt = Number(def.effects.healHP) || 0;
-      if(amt > 0){
-        target.hp = Math.min(100, Number(target.hp ?? 100) + amt);
-        events.push({ type:"HEAL", who: targetId, by: who, amount: amt, itemDefId: def.id });
-      }
-    }
-    // Heal FP
-    if(def.effects?.healFP){
-      const amt = Number(def.effects.healFP) || 0;
-      if(amt > 0){
-        target.fp = Math.min(70, Number(target.fp ?? 70) + amt);
-        // Counts as fed for starvation prevention.
-        target._today = target._today || {};
-        target._today.mustFeed = false;
-        target._today.fed = true;
-        events.push({ type:"EAT", who: targetId, areaId: target.areaId, amount: amt, itemDefId: def.id });
-      }
-    }
-    // Cure poison
-    if(def.effects?.curePoison){
-      const hadPoison = (target.status || []).some(s => s?.type === "poison");
-      if(hadPoison){
-        target.status = (target.status || []).filter(s => s?.type !== "poison");
-        events.push({ type:"POISON_CURED", who: targetId, by: who, itemDefId: def.id, areaId: target.areaId });
-      }
-    }
-    // Prevent next trap once (net/mine etc.)
-    if(def.effects?.preventTrapOnce){
-      target._meta = target._meta || {};
-      target._meta.preventTrapOnce = true;
-      events.push({ type:"TRAP_GUARD", who: targetId, itemDefId: def.id });
-    }
-    // Ignore one movement block today (stimulant)
-    if(def.effects?.ignoreMoveBlockToday){
-      target._today = target._today || {};
-      target._today.ignoreMoveBlock = true;
-      events.push({ type:"MOVE_BOOST", who: targetId, itemDefId: def.id });
-    }
-
-    events.push({ type:"USE_ITEM", ok:true, who, itemDefId:def.id, target: targetId });
-    handled = true;
-  }
-
-  // Flask reveal (medicine/poison)
-  if(!handled && def.id === "flask" && def.effects?.revealOnUse){
+  } else if(def.id === "flask" && def.effects?.revealOnUse){
     const kind = it.meta?.hiddenKind || (prng(seed, day, `flask_${who}_${itemIndex}`) < 0.5 ? "medicine" : "poison");
     if(kind === "medicine"){
       const hadPoison = (target.status || []).some(s => s?.type === "poison");
@@ -1015,13 +1032,11 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
         return { nextWorld: next, events };
       }
     }
-    handled = true;
-  }
-
-  if(!handled){
+  } else {
     events.push({ type:"USE_ITEM", ok:false, reason:"unhandled" });
     return { nextWorld: next, events };
   }
+
   // Consume one use and remove item
   removeInventoryItem(inv, itemIndex);
   return { nextWorld: next, events };
@@ -1155,6 +1170,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       if(!t || (t.hp ?? 0) <= 0) continue;
       if(t.areaId !== a.areaId) continue;
       if(t._today?.invisible) continue;
+      // If this attacker already resolved an attack during the commit-action phase,
+      // don't resolve it again at End Day.
+      if(a._today?.attackResolved) continue;
       // If they defended, they can't attack that day.
       if(a._today?.defendedWithShield) continue;
       attackDecl.set(a.id, targetId);
