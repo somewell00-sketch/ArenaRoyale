@@ -331,6 +331,12 @@ function openBackpackIntoInventory(world, owner, area, backpackInstance, events,
       inst.meta.hiddenKind = (prng(seed, day, `bp_flask_${backpackInstance?.meta?.seedTag || ""}_${i}`) < 0.5) ? "medicine" : "poison";
     }
 
+    // Some backpack contents are resources that auto-consume on collect (e.g., First Aid Backpack).
+    const consumed = applyOnCollect(world, owner, area, inst, events);
+    if(consumed.consumed){
+      events.push({ type:"BACKPACK_ITEM", ok:true, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id, note:"consumed_on_open" });
+      continue;
+    }
     const ok = addToInventory(owner.inventory, inst);
     if(ok.ok){
       events.push({ type:"BACKPACK_ITEM", ok:true, who: owner.id, itemDefId: inst.defId, qty: inst.qty || 1, areaId: area.id });
@@ -922,13 +928,69 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
   const def = getItemDef(it.defId);
   if(!def || def.type !== ItemTypes.CONSUMABLE) return { nextWorld: next, events: [{ type:"USE_ITEM", ok:false, reason:"not_consumable" }] };
 
-  // Apply effects (data-driven flags)
+  // Apply effects (data-driven).
+  // Notes:
+  // - Some consumables are auto-consumed on collect, but they can still exist in inventory (e.g., from backpacks).
+  // - This handler supports the same effect flags as applyOnCollect().
+  let handled = false;
+
   if(def.effects?.invisibleOneDay){
     user._today = user._today || {};
     user._today.invisible = true;
     events.push({ type:"USE_ITEM", ok:true, who, itemDefId:def.id });
     events.push({ type:"INVISIBLE", who });
-  } else if(def.id === "flask" && def.effects?.revealOnUse){
+    handled = true;
+  }
+
+  // Generic heals / cures
+  if(!handled && (def.effects?.healHP || def.effects?.healFP || def.effects?.curePoison || def.effects?.preventTrapOnce || def.effects?.ignoreMoveBlockToday)){
+    // Heal HP
+    if(def.effects?.healHP){
+      const amt = Number(def.effects.healHP) || 0;
+      if(amt > 0){
+        target.hp = Math.min(100, Number(target.hp ?? 100) + amt);
+        events.push({ type:"HEAL", who: targetId, by: who, amount: amt, itemDefId: def.id });
+      }
+    }
+    // Heal FP
+    if(def.effects?.healFP){
+      const amt = Number(def.effects.healFP) || 0;
+      if(amt > 0){
+        target.fp = Math.min(70, Number(target.fp ?? 70) + amt);
+        // Counts as fed for starvation prevention.
+        target._today = target._today || {};
+        target._today.mustFeed = false;
+        target._today.fed = true;
+        events.push({ type:"EAT", who: targetId, areaId: target.areaId, amount: amt, itemDefId: def.id });
+      }
+    }
+    // Cure poison
+    if(def.effects?.curePoison){
+      const hadPoison = (target.status || []).some(s => s?.type === "poison");
+      if(hadPoison){
+        target.status = (target.status || []).filter(s => s?.type !== "poison");
+        events.push({ type:"POISON_CURED", who: targetId, by: who, itemDefId: def.id, areaId: target.areaId });
+      }
+    }
+    // Prevent next trap once (net/mine etc.)
+    if(def.effects?.preventTrapOnce){
+      target._meta = target._meta || {};
+      target._meta.preventTrapOnce = true;
+      events.push({ type:"TRAP_GUARD", who: targetId, itemDefId: def.id });
+    }
+    // Ignore one movement block today (stimulant)
+    if(def.effects?.ignoreMoveBlockToday){
+      target._today = target._today || {};
+      target._today.ignoreMoveBlock = true;
+      events.push({ type:"MOVE_BOOST", who: targetId, itemDefId: def.id });
+    }
+
+    events.push({ type:"USE_ITEM", ok:true, who, itemDefId:def.id, target: targetId });
+    handled = true;
+  }
+
+  // Flask reveal (medicine/poison)
+  if(!handled && def.id === "flask" && def.effects?.revealOnUse){
     const kind = it.meta?.hiddenKind || (prng(seed, day, `flask_${who}_${itemIndex}`) < 0.5 ? "medicine" : "poison");
     if(kind === "medicine"){
       const hadPoison = (target.status || []).some(s => s?.type === "poison");
@@ -953,11 +1015,13 @@ export function useInventoryItem(world, who, itemIndex, targetId = who){
         return { nextWorld: next, events };
       }
     }
-  } else {
+    handled = true;
+  }
+
+  if(!handled){
     events.push({ type:"USE_ITEM", ok:false, reason:"unhandled" });
     return { nextWorld: next, events };
   }
-
   // Consume one use and remove item
   removeInventoryItem(inv, itemIndex);
   return { nextWorld: next, events };
