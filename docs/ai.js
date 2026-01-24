@@ -21,6 +21,8 @@ export function generateNpcIntents(world){
     npc.memory.visited = npc.memory.visited || [];
     npc.memory.lastAreas = npc.memory.lastAreas || [];
     npc.memory.traits = npc.memory.traits || makeTraits(seed, npc.id, npc.district);
+    // Per-day flags (reset each day)
+    npc.memory._plannedCornCollect = false;
 
     const traits = npc.memory.traits;
     const obs = buildObservedWorld(world, npc);
@@ -112,6 +114,10 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     const r = hash01(seed, day, `collect_pick|${npc.id}|corn`);
     const pickPos = Math.floor(r * topK.length);
     const chosen = topK[Math.max(0, Math.min(topK.length - 1, pickPos))];
+    // Mark that this NPC is grabbing something from the Cornucopia today.
+    // Movement logic uses this to force immediate dispersal.
+    npc.memory = npc.memory || {};
+    npc.memory._plannedCornCollect = true;
     return { source: npc.id, type: "COLLECT", payload: { itemIndex: chosen.idx } };
     }
   }
@@ -226,6 +232,8 @@ function decideMove(world, npc, obs, traits, { seed, day }){
   const lowFp = (npc.fp ?? 0) <= 20;
   const currentArea = world.map?.areasById?.[String(npc.areaId)];
   const inCornucopia = Number(currentArea?.id) === 1;
+  const invCountNow = inventoryCount(npc.inventory);
+  const grabbedCornToday = !!npc?.memory?._plannedCornCollect;
 const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visited : []);
 
   // BFS up to 3 steps, but we score only known areas well. Unknown areas get conservative estimates.
@@ -270,12 +278,15 @@ const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visit
 // 0 items -> tends to stay and fight for loot
 // 1 item  -> starts considering leaving
 // 2+ items -> strongly prefers leaving
-const invCount = inventoryCount(npc.inventory);
+const invCount = invCountNow;
 let stayBias = 0;
 if(Number(start) === 1){
-  if(invCount === 0) stayBias = +0.22;
-  else if(invCount === 1) stayBias = -0.28;
-  else stayBias = -0.55;
+  // After grabbing *anything* from the Cornucopia, NPCs should disperse quickly.
+  // This keeps Day 1 dynamic and prevents permanent Cornucopia camping.
+  if(invCount === 0 && !grabbedCornToday) stayBias = +0.10;
+  else if(invCount === 0 && grabbedCornToday) stayBias = -0.75;
+  else if(invCount === 1) stayBias = -0.85;
+  else stayBias = -1.05;
 } else {
   if(invCount >= 2) stayBias = -0.12;
 }
@@ -293,7 +304,10 @@ const adjustedStayScore = stayScore + stayBias;
   // Cornucopia: don't force early dispersal too fast or most loot will never be contested.
   // Start forcing dispersal only after getting at least 2 items, and only when the pile is small.
   const cornLootLow = (Number(start) === 1) && (hereGround.length <= 6);
-  const forceMove = emptyHere || (Number(start) === 1 && invCount >= 2 && cornLootLow);
+  // FORCE DISPERSAL: if they grabbed an item today (or already have one) and are in area 1,
+  // they should move out immediately (unless trapped).
+  const forceLeaveCorn = (Number(start) === 1) && (grabbedCornToday || invCount >= 1);
+  const forceMove = emptyHere || forceLeaveCorn || (Number(start) === 1 && invCount >= 2 && cornLootLow);
 
   const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
   const canMove = forceMove || scored.some(s => !s.isStay && (s.score - adjustedStayScore) >= moveThreshold);
@@ -302,7 +316,10 @@ const adjustedStayScore = stayScore + stayBias;
   // Deterministic weighted choice among the top few candidates.
   // More cautious NPCs behave more deterministically (lower temperature).
   const temperature = 0.55 - traits.caution * 0.30; // 0.25..0.55
-  const pool = scored.filter(s => !s.isStay).slice(0, 6);
+  // If we are forcing a Cornucopia exit, prefer a simple 1-step route (clean dispersal).
+  const poolBase = scored.filter(s => !s.isStay);
+  const pool1 = forceLeaveCorn ? poolBase.filter(s => s.steps === 1) : poolBase;
+  const pool = (pool1.length ? pool1 : poolBase).slice(0, 6);
   const pickR = hash01(seed, day, `move_pick|${npc.id}`);
   const chosen = weightedPick(pool, pickR, temperature) || pool[0];
 
@@ -314,6 +331,8 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   if(!a) return -1e9;
   if(a.isActive === false) return -1e9;
   // Hard avoid areas that are not enterable (e.g., water without bridge).
+  if(a.hasWater && !a.hasBridge) return -1e9;
+  // Can't enter water without a bridge.
   if(a.hasWater && !a.hasBridge) return -1e9;
 
   // Territory noise: NPCs are attracted to noisy zones.
