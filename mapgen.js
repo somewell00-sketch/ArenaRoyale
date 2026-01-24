@@ -131,9 +131,9 @@ const BIOMES = [
   "fairy","swamp","lake","industrial"
 ];
 
-// --- Arena names (display) ---
-const ARENA_NAME_BY_BIOME = {
-  regular: "Survival Arena",
+// --- Arena names (UI) ---
+// When the arena is not thematic, the UI should show "Survival Arena".
+const ARENA_NAMES_BY_BIOME = {
   glacier: "Himani Arena",
   tundra: "Kunlun Arena",
   mountain: "Orqo Arena",
@@ -328,15 +328,11 @@ function cellAtPoint(cells, x, y){
 
 export function generateMapData({ seed, regions, width=820, height=820, paletteIndex=0 }){
   const rng = mulberry32(seed);
-
-  // 20% chance of a thematic arena.
-  // When thematic: 75% of zones share a dominant biome; the remaining 25% are assigned normally
-  // but only among the other biomes (dominant excluded).
-  const isThematic = rng.next() < 0.20;
-  const dominantBiome = isThematic ? rng.pick(BIOMES) : null;
-  const arenaName = isThematic
-    ? (ARENA_NAME_BY_BIOME[dominantBiome] || ARENA_NAME_BY_BIOME.regular)
-    : ARENA_NAME_BY_BIOME.regular;
+  // IMPORTANT: keep the existing RNG stream for geometry/biomes untouched when the arena
+  // is not thematic. We use a separate RNG derived from the same seed for the theme roll.
+  const themeRng = mulberry32(seed ^ 0xA9F1D3B);
+  const isThematic = themeRng.next() < 0.20;
+  const dominantBiome = isThematic ? themeRng.pick(BIOMES) : null;
 
   const W = width, H = height;
   const CX = W/2, CY = H/2;
@@ -410,113 +406,150 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     adj.set(id, set);
   }
 
-  // --- Biomes ---
-  if (!isThematic){
-    // Regular (existing behavior): score + quotas
-    const counts = {};
-    for(const b of BIOMES) counts[b] = 0;
+  // biomes with quotas
+  const counts = {};
+  for(const b of BIOMES) counts[b] = 0;
 
-    // pass 1
-    for(const cell of cells){
-      if (cell.id === 1){
-        cell.biome = "fairy";
-        counts.fairy++;
-        continue;
+  // pass 1
+  for(const cell of cells){
+    if (cell.id === 1){
+      cell.biome = "fairy";
+      counts.fairy++;
+      continue;
+    }
+    const scores = biomeScores(cell.features);
+    const allowed = new Set();
+    for(const b of BIOMES) if(counts[b] < QUOTAS[b].max) allowed.add(b);
+
+    let biome = pickBiomeByScore(scores, rng, allowed);
+    if (!allowed.has(biome)) biome = "plains";
+    cell.biome = biome;
+    counts[biome]++;
+  }
+
+  // pass 2 ensure mins (simple)
+  const needs = [];
+  for(const b of BIOMES){
+    const deficit = QUOTAS[b].min - counts[b];
+    if(deficit > 0) needs.push([b, deficit]);
+  }
+  needs.sort((a,b)=> b[1]-a[1]);
+
+  function findDonor(){
+    let best=null, slack=0;
+    for(const b of BIOMES){
+      const s = counts[b] - QUOTAS[b].min;
+      if(s > slack){ slack = s; best=b; }
+    }
+    return best;
+  }
+
+  for(const [target, deficit0] of needs){
+    let deficit = deficit0;
+    while(deficit > 0){
+      const donor = findDonor();
+      if(!donor) break;
+
+      // troca a célula doadora que mais combina com target
+      let bestCell = null;
+      let bestGain = -Infinity;
+
+      for(const cell of cells){
+        if(cell.id === 1) continue;
+        if(cell.biome !== donor) continue;
+        if(counts[donor] <= QUOTAS[donor].min) continue;
+
+        const sc = biomeScores(cell.features);
+        const gain = (sc[target] || 0) - (sc[donor] || 0);
+        if(gain > bestGain){
+          bestGain = gain;
+          bestCell = cell;
+        }
       }
+
+      if(!bestCell) break;
+      counts[donor]--;
+      bestCell.biome = target;
+      counts[target]++;
+      deficit--;
+    }
+  }
+
+  // --- Thematic arena rule ---
+  // 20% chance: 75% of the zones (excluding the special area id=1) become a dominant biome.
+  // The remaining 25% keep the current generation logic (already applied above), except that
+  // they must not be the dominant biome.
+  if (isThematic && dominantBiome){
+    // current counts
+    const countsNow = {};
+    for (const b of BIOMES) countsNow[b] = 0;
+    for (const cell of cells){
+      if (cell.biome && countsNow[cell.biome] != null) countsNow[cell.biome]++;
+    }
+
+    const candidates = cells.filter(c => c.id !== 1);
+    const targetDominant = Math.ceil(candidates.length * 0.75);
+
+    const scoreFor = (cell, biome) => {
+      const sc = biomeScores(cell.features);
+      return sc[biome] || 0;
+    };
+
+    // Helper to repick a non-dominant biome, using the existing scoring system.
+    const repickNonDominant = (cell) => {
       const scores = biomeScores(cell.features);
       const allowed = new Set();
-      for(const b of BIOMES) if(counts[b] < QUOTAS[b].max) allowed.add(b);
-
-      let biome = pickBiomeByScore(scores, rng, allowed);
-      if (!allowed.has(biome)) biome = "plains";
-      cell.biome = biome;
-      counts[biome]++;
-    }
-
-    // pass 2 ensure mins (simple)
-    const needs = [];
-    for(const b of BIOMES){
-      const deficit = QUOTAS[b].min - counts[b];
-      if(deficit > 0) needs.push([b, deficit]);
-    }
-    needs.sort((a,b)=> b[1]-a[1]);
-
-    function findDonor(){
-      let best=null, slack=0;
-      for(const b of BIOMES){
-        const s = counts[b] - QUOTAS[b].min;
-        if(s > slack){ slack = s; best=b; }
+      for (const b of BIOMES){
+        if (b === dominantBiome) continue;
+        if ((countsNow[b] ?? 0) < QUOTAS[b].max) allowed.add(b);
       }
-      return best;
+      // If we are fully saturated by max quotas, fall back to anything except dominant.
+      if (!allowed.size){
+        for (const b of BIOMES) if (b !== dominantBiome) allowed.add(b);
+      }
+      const nextBiome = pickBiomeByScore(scores, rng, allowed);
+      return nextBiome === dominantBiome ? "plains" : nextBiome;
+    };
+
+    // Step 1: If we have more dominant than target, demote the weakest matches.
+    let dominantCells = candidates.filter(c => c.biome === dominantBiome);
+    if (dominantCells.length > targetDominant){
+      dominantCells
+        .map(c => ({ c, s: scoreFor(c, dominantBiome) }))
+        .sort((a,b)=> a.s - b.s)
+        .slice(0, dominantCells.length - targetDominant)
+        .forEach(({ c }) => {
+          countsNow[dominantBiome]--;
+          const newBiome = repickNonDominant(c);
+          c.biome = newBiome;
+          countsNow[newBiome] = (countsNow[newBiome] ?? 0) + 1;
+        });
     }
 
-    for(const [target, deficit0] of needs){
-      let deficit = deficit0;
-      while(deficit > 0){
-        const donor = findDonor();
-        if(!donor) break;
-
-        // troca a célula doadora que mais combina com target
-        let bestCell = null;
-        let bestGain = -Infinity;
-
-        for(const cell of cells){
-          if(cell.id === 1) continue;
-          if(cell.biome !== donor) continue;
-          if(counts[donor] <= QUOTAS[donor].min) continue;
-
-          const sc = biomeScores(cell.features);
-          const gain = (sc[target] || 0) - (sc[donor] || 0);
-          if(gain > bestGain){
-            bestGain = gain;
-            bestCell = cell;
-          }
-        }
-
-        if(!bestCell) break;
-        counts[donor]--;
-        bestCell.biome = target;
-        counts[target]++;
-        deficit--;
-      }
+    // Step 2: If we have fewer dominant than target, promote the strongest matches.
+    dominantCells = candidates.filter(c => c.biome === dominantBiome);
+    if (dominantCells.length < targetDominant){
+      const needed = targetDominant - dominantCells.length;
+      candidates
+        .filter(c => c.biome !== dominantBiome)
+        .map(c => ({ c, s: scoreFor(c, dominantBiome) }))
+        .sort((a,b)=> b.s - a.s)
+        .slice(0, needed)
+        .forEach(({ c }) => {
+          countsNow[c.biome]--;
+          c.biome = dominantBiome;
+          countsNow[dominantBiome] = (countsNow[dominantBiome] ?? 0) + 1;
+        });
     }
-  } else {
-    // Thematic: dominant biome covers 75% of zones.
-    // Remaining 25% are assigned by current scoring logic but excluding the dominant biome.
-    const dominantCount = Math.floor(regions * 0.75);
-    const otherCountTotal = Math.max(0, regions - dominantCount);
 
-    // Area 1 remains special (fairy). It counts as "other" unless dominantBiome is fairy.
-    const otherIncludesArea1 = (dominantBiome !== "fairy");
-    const remainingOther = Math.max(0, otherCountTotal - (otherIncludesArea1 ? 1 : 0));
-
-    // Pick which non-1 cells will be "other".
-    const candidates = cells.filter(c => c.id !== 1);
-    // Fisher–Yates shuffle with deterministic RNG
-    for(let i=candidates.length-1; i>0; i--){
-      const j = Math.floor(rng.next() * (i+1));
-      const tmp = candidates[i];
-      candidates[i] = candidates[j];
-      candidates[j] = tmp;
-    }
-    const otherSet = new Set(candidates.slice(0, remainingOther).map(c => c.id));
-
-    const allowedOther = new Set(BIOMES.filter(b => b !== dominantBiome));
-
-    for (const cell of cells){
-      if (cell.id === 1){
-        cell.biome = "fairy";
-        continue;
+    // Step 3: Ensure the remaining 25% are not dominant.
+    for (const cell of candidates){
+      if (cell.biome === dominantBiome) continue;
+      // If any non-dominant accidentally equals dominant (shouldn't), repick.
+      if (cell.biome === dominantBiome){
+        const newBiome = repickNonDominant(cell);
+        cell.biome = newBiome;
       }
-      if (!otherSet.has(cell.id)){
-        cell.biome = dominantBiome;
-        continue;
-      }
-
-      const scores = biomeScores(cell.features);
-      let biome = pickBiomeByScore(scores, rng, allowedOther);
-      if (!allowedOther.has(biome)) biome = "plains";
-      cell.biome = biome;
     }
   }
 
@@ -552,10 +585,7 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
       id: c.id,
       biome: c.biome,
       color: c.fillColor,
-      hasWater: !!c.hasWater,
-      // v0: allow traversal across water by treating all water areas as having a bridge.
-      // Keeps the "bridge" mechanic for later without restricting movement now.
-      hasBridge: !!c.hasWater
+      hasWater: !!c.hasWater
     };
     adjById[String(c.id)] = Array.from(adj.get(c.id) || []).sort((a,b)=>a-b);
   }
@@ -572,15 +602,11 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     river: { points: river.points, cellIds: Array.from(riverCellIds) }
   };
 
-  return {
-    areasById,
-    adjById,
-    uiGeom,
-    arenaName,
-    // kept for debugging/UI if needed later; no gameplay logic depends on this
-    dominantBiome: dominantBiome || null,
-    isThematic
-  };
+  const arenaName = isThematic
+    ? (ARENA_NAMES_BY_BIOME[dominantBiome] || "Survival Arena")
+    : "Survival Arena";
+
+  return { areasById, adjById, uiGeom, arenaName };
 }
 
 function buildRiver({ rng, cells, adj, width, height, blobRadius }){
