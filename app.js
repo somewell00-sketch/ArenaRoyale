@@ -538,20 +538,11 @@ function renderGame(){
             <button id="clearLocal" class="btn">Clear save</button>
           </div>
         </details>
-
-        <div id="confirmModal" class="confirmOverlay hidden">
-          <div class="confirmCard">
-            <div id="confirmText" class="h2" style="margin:0 0 10px 0;">Use item?</div>
-            <div class="row" style="gap:8px;">
-              <button id="confirmYes" class="btn primary" style="flex:1;">Confirm</button>
-              <button id="confirmNo" class="btn" style="flex:1;">Cancel</button>
-            </div>
-          </div>
-        </div>
       </aside>
     <main class="canvasWrap">
         <canvas id="c" width="820" height="820"></canvas>
         <div id="areaInfo" class="areaInfo">—</div>
+        <div id="toastHost" class="toastHost" aria-live="polite" aria-relevant="additions"></div>
         <div class="hint">Cornucopia is Area 1 • Select an area to inspect • Move only after committing an action</div>
       </main>
       <!-- RIGHT: gameplay (actions + entities in your current area) -->
@@ -576,7 +567,8 @@ function renderGame(){
             <div id="groundItemPills" class="pillWrap" style="margin-top:8px;"></div>
           </div>
 
-          <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+          <div class="actionBar" id="needsActionBar">
+            <div class="row" style="gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
             <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" data-tooltip="Restore 5 FP by drinking water">Drink water</button>
@@ -584,19 +576,21 @@ function renderGame(){
             <button id="btnSetMine" class="btn orange hidden" style="flex:1; min-width:120px;" data-tooltip="Set a Mine trap here (activates tomorrow)">Set Mine</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
             <button id="btnCollect" class="btn hidden" style="flex:1; min-width:120px;" data-tooltip="Pick up the selected item">Collect item</button>
+            </div>
+            <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
           </div>
-
-          <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft"></span></div>
         </div>
 
         <div id="exploreState" class="section hidden">
           <div class="banner">
             You survived another day. You may move and then end the day.
           </div>
-          <div class="row" style="margin-top:12px;">
+          <div class="actionBar" id="exploreActionBar">
+          <div class="row">
             <button id="btnEndDay" class="btn green" style="width:100%; padding:12px 14px;">End Day</button>
           </div>
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft2"></span></div>
+          </div>
         </div>
 
         <div id="trappedState" class="section hidden">
@@ -604,10 +598,12 @@ function renderGame(){
             You are trapped in a Net. You cannot act or move for <span id="trapDays"></span> day(s).
           </div>
           <div class="muted" style="margin-top:10px;">You can only escape by cutting the net with a Dagger.</div>
-          <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
+          <div class="actionBar" id="trappedActionBar">
+          <div class="row" style="gap:8px; flex-wrap:wrap;">
             <button id="btnCutNet" class="btn red hidden" style="flex:1; min-width:160px;" data-tooltip="Consume 1 Dagger to escape">Cut net (Dagger)</button>
             <button id="btnEndDayTrapped" class="btn green" style="flex:1; min-width:160px;">End Day</button>
           </div>
+        </div>
         </div>
       </aside>
 
@@ -657,12 +653,38 @@ function renderGame(){
   const invCountEl = document.getElementById("invCount");
   const invPillsEl = document.getElementById("invPills");
 
-  const confirmModal = document.getElementById("confirmModal");
-  const confirmText = document.getElementById("confirmText");
-  const confirmYes = document.getElementById("confirmYes");
-  const confirmNo = document.getElementById("confirmNo");
-
   const areaInfoEl = document.getElementById("areaInfo");
+
+  const toastHost = document.getElementById("toastHost");
+
+  function pushToast(content, { kind="info", ttl=5000 } = {}){
+    if(!toastHost) return;
+    const el = document.createElement("div");
+    el.className = `toast ${kind}`;
+    if(Array.isArray(content)){
+      el.innerHTML = content.map(line => `<div class="toastLine">${escapeHtml(String(line))}</div>`).join("");
+    } else {
+      el.textContent = String(content ?? "");
+    }
+    toastHost.appendChild(el);
+
+    const remove = () => {
+      if(!el.parentNode) return;
+      el.classList.add("out");
+      setTimeout(() => { el.remove(); }, 200);
+    };
+
+    el.addEventListener("click", remove);
+    setTimeout(remove, Math.max(500, Number(ttl) || 5000));
+  }
+
+  function toastEvents(events, { limit=6 } = {}){
+    const lines = formatEvents(events).filter(Boolean);
+    if(!lines.length) return;
+    const chunks = [];
+    for(let i=0;i<lines.length;i+=limit) chunks.push(lines.slice(i, i+limit));
+    for(const c of chunks) pushToast(c, { kind:"event" });
+  }
 
   const canvas = document.getElementById("c");
   const mapUI = new MapUI({
@@ -675,48 +697,6 @@ function renderGame(){
       sync();
     }
   });
-
-  let pendingConfirm = null; // { type: "consume"|"discard", idx }
-
-  // Tooltips are global (start screen + in-game)
-  ensureTooltips();
-  confirmNo.onclick = () => {
-    pendingConfirm = null;
-    confirmModal.classList.add("hidden");
-  };
-  confirmYes.onclick = () => {
-    if(!pendingConfirm){ confirmModal.classList.add("hidden"); return; }
-    const { type, idx } = pendingConfirm;
-    if(type === "consume"){
-      const res = useInventoryItem(world, "player", idx, "player");
-      world = res.nextWorld;
-      uiState.dayEvents.push(...(res.events || []));
-      saveToLocal(world);
-      pendingConfirm = null;
-      confirmModal.classList.add("hidden");
-      sync();
-      openResultDialog(res.events || []);
-      return;
-    }
-    if(type === "discard"){
-      const p = world.entities.player;
-      if(p?.inventory?.items?.[idx]){
-        p.inventory.items.splice(idx, 1);
-        // Clean equipped refs
-        if(p.inventory?.equipped?.weaponDefId && !p.inventory.items.some(it => it.defId === p.inventory.equipped.weaponDefId)){
-          p.inventory.equipped.weaponDefId = null;
-        }
-        if(p.inventory?.equipped?.defenseDefId && !p.inventory.items.some(it => it.defId === p.inventory.equipped.defenseDefId)){
-          p.inventory.equipped.defenseDefId = null;
-        }
-      }
-      saveToLocal(world);
-      pendingConfirm = null;
-      confirmModal.classList.add("hidden");
-      sync();
-      return;
-    }
-  };
 
   function handleAreaClick(id){
     if(!world) return;
@@ -995,9 +975,15 @@ function renderGame(){
         const it = items[idx];
         const def = it ? getItemDef(it.defId) : null;
         const name = def?.name || it?.defId || "item";
-        pendingConfirm = { type: "discard", idx };
-        confirmText.textContent = `Discard ${name}? It will be permanently destroyed.`;
-        confirmModal.classList.remove("hidden");
+        const p = world.entities.player;
+        if(p?.inventory?.items?.[idx]){
+          p.inventory.items.splice(idx, 1);
+          if(p.inventory?.equipped?.weaponDefId && !p.inventory.items.some(it2 => it2.defId === p.inventory.equipped.weaponDefId)) p.inventory.equipped.weaponDefId = null;
+          if(p.inventory?.equipped?.defenseDefId && !p.inventory.items.some(it2 => it2.defId === p.inventory.equipped.defenseDefId)) p.inventory.equipped.defenseDefId = null;
+          saveToLocal(world);
+          renderInventory();
+          pushToast(`Discarded ${name}.`);
+        }
       };
     });
 
@@ -1021,10 +1007,13 @@ function renderGame(){
           return;
         }
         if(def.type === ItemTypes.CONSUMABLE){
-          // confirm modal
-          pendingConfirm = { type: "consume", idx };
-          confirmText.textContent = `Use ${def.name}?`;
-          confirmModal.classList.remove("hidden");
+          // Use immediately (dialogs are reserved for death/victory)
+          const res = useInventoryItem(world, "player", idx, "player");
+          world = res.nextWorld;
+          uiState.dayEvents.push(...(res.events || []));
+          saveToLocal(world);
+          renderInventory();
+          toastEvents(res.events || []);
           return;
         }
       };
@@ -1412,58 +1401,8 @@ function renderGame(){
   if(!uiState.victoryDialogShown) uiState.victoryDialogShown = false;
 
   function openResultDialog(events){
-    const lines = formatEvents(events);
-
-    // Backpack summary (if any)
-    const bpOpen = (events || []).find(e => e.type === "BACKPACK_OPEN");
-    let backpackBlock = "";
-    if(bpOpen){
-      const contents = (events || []).filter(e => e.type === "BACKPACK_ITEM");
-      const pills = contents.map(e => {
-        const def = getItemDef(e.itemDefId);
-        const name = def ? def.name : e.itemDefId;
-        const icon = getItemIcon(e.itemDefId);
-        const qty = e.qty || 1;
-        const dropped = e.ok === false ? " • dropped" : "";
-        const stack = qty > 1 ? ` x${escapeHtml(String(qty))}` : "";
-        return `<div class="miniPill" title="${escapeHtml(def?.description || "")}">
-          <span class="pillIcon" aria-hidden="true">${escapeHtml(icon)}</span>
-          <span class="pillName">${escapeHtml(name)}${stack}</span>
-          <span class="pillSub muted tiny">${escapeHtml(dropped)}</span>
-        </div>`;
-      }).join("");
-
-      backpackBlock = `
-        <div class="muted small" style="margin-top:12px;">Backpack contents</div>
-        <div class="miniPillWrap" style="margin-top:8px;">${pills || `<div class="muted small">(Empty)</div>`}</div>
-      `;
-    }
-
-    const overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.innerHTML = `
-      <div class="modal">
-        <div class="h1" style="margin:0;">Action result</div>
-        <div class="muted small" style="margin-top:6px;">What happened:</div>
-
-        <div class="eventList">
-          ${lines.length ? lines.map(l => `<div class="eventLine">${escapeHtml(l)}</div>`).join("") : `<div class="muted small">Nothing happened.</div>`}
-        </div>
-
-        ${backpackBlock}
-
-        <div class="row" style="margin-top:14px; justify-content:flex-end;">
-          <button id="ok" class="btn primary">OK</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const close = () => overlay.remove();
-    overlay.querySelector("#ok").onclick = close;
-
-    // auto-close after 5 seconds
-    setTimeout(() => { if(document.body.contains(overlay)) close(); }, 5000);
+    // UI change: results are shown as toasts (dialogs are reserved for death/victory).
+    toastEvents(events);
   }
 
   function openDeathDialog({ reason = "death" } = {}){
@@ -1774,116 +1713,48 @@ function renderGame(){
   }
 
   function openEndDayDialog(events){
+    // UI change: end-of-day notifications are toasts (no dialog).
     const npcName = (id) => {
+      if(id === "player") return "You";
       const n = world?.entities?.npcs?.[id];
       return n?.name || id;
     };
 
-    // Deaths: prefer event log, but also support compound events like MINE_BLAST.
+    const evs = Array.isArray(events) ? events : [];
+
     const deadIds = new Set();
-    for(const e of (events || [])){
-      if(e?.type === "DEATH" && e.who && e.who !== "player") deadIds.add(e.who);
+    for(const e of evs){
+      if(e?.type === "DEATH" && e.who) deadIds.add(e.who);
       if(e?.type === "MINE_BLAST" && Array.isArray(e.dead)){
-        for(const id of e.dead){ if(id && id !== "player") deadIds.add(id); }
+        for(const id of e.dead){ if(id) deadIds.add(id); }
       }
     }
+    deadIds.delete("player");
     const deadNames = Array.from(deadIds).map(id => npcName(id));
     const cannonCount = deadNames.length;
 
-    // Player damage during the day rollover (poison ticks, mines, daily threats, laser, etc.).
-    const rolloverDmg = (events || []).filter(e => {
-      if(!e) return false;
-      if(e.who !== "player") return false;
-      // These events occur during endDay() / new-day processing (not from the player's commit UI).
-      return ["POISON_TICK","MINE_HIT","CREATURE_ATTACK","HOSTILE_EVENT","LASER"].includes(e.type);
-    });
+    if(cannonCount > 0){
+      pushToast(`Cannon shots: ${cannonCount}`, { kind:"event" });
+      const list = deadNames.slice(0, 10);
+      const suffix = deadNames.length > 10 ? ` (+${deadNames.length - 10} more)` : "";
+      pushToast([`Fallen tributes:`, `${list.join(", ")}${suffix}`], { kind:"event" });
+    }
 
     const dmgLines = [];
-    for(const e of rolloverDmg){
-      if(e.type === "POISON_TICK") dmgLines.push(`Poison dealt ${e.dmg} damage.`);
-      else if(e.type === "MINE_HIT") dmgLines.push(`A mine dealt ${e.dmg} damage.`);
-      else if(e.type === "CREATURE_ATTACK") dmgLines.push(`${e.creature} attacked you for ${e.dmg} damage.`);
-      else if(e.type === "HOSTILE_EVENT") dmgLines.push(`Something attacked you in the chaos (${e.dmg} damage).`);
-      else if(e.type === "LASER") dmgLines.push(e.text ? String(e.text) : `A laser struck you for ${e.dmg} damage.`);
+    for(const e of evs){
+      if(!e || e.who !== "player") continue;
+      if(e.type === "POISON_TICK") dmgLines.push(`Poison: -${e.dmg} HP`);
+      else if(e.type === "MINE_HIT") dmgLines.push(`Mine: -${e.dmg} HP`);
+      else if(e.type === "CREATURE_ATTACK") dmgLines.push(`${e.creature}: -${e.dmg} HP`);
+    }
+    if(dmgLines.length){
+      pushToast(["End of day damage:", ...dmgLines], { kind:"danger" });
     }
 
-    // Perception-based world feedback (tactical, but diegetic).
-    const playerArea = Number(world?.entities?.player?.areaId);
-    const links = Array.isArray(world?.map?.links) ? world.map.links : [];
-    const adjacent = new Set();
-    for(const l of links){
-      if(!l) continue;
-      if(Number(l.from) === playerArea) adjacent.add(Number(l.to));
-      if(Number(l.to) === playerArea) adjacent.add(Number(l.from));
+    const other = evs.filter(e => e && (e.type === "INFO"));
+    for(const e of other){
+      if(e.msg) pushToast(String(e.msg), { kind:"info" });
     }
-
-    const sameArea = [];
-    const nearby = [];
-
-    function addOnce(arr, msg){ if(!arr.includes(msg)) arr.push(msg); }
-
-    for(const e of (events || [])){
-      const areaId = Number(e.areaId ?? e.to ?? NaN);
-      const inSame = Number.isFinite(areaId) && areaId === playerArea;
-      const inAdj = Number.isFinite(areaId) && adjacent.has(areaId);
-
-      // Violence / danger signals.
-      if(e.type === "ATTACK" && e.ok !== false){
-        if(inSame) addOnce(sameArea, "You witnessed a fight today.");
-        else if(inAdj) addOnce(nearby, "You hear a fight nearby.");
-      }
-      if(e.type === "CREATURE_ATTACK"){
-        if(inSame) addOnce(sameArea, "Signs of a creature attack are fresh here.");
-        else if(inAdj) addOnce(nearby, "Distant screeches echo nearby.");
-      }
-      if(e.type === "MINE_BLAST"){
-        if(inSame) addOnce(sameArea, "The ground here was disturbed by an explosion.");
-        else if(inAdj) addOnce(nearby, "A dull explosion echoes nearby.");
-      }
-      if(e.type === "NET_TRIGGER"){
-        if(inSame) addOnce(sameArea, "A trap was sprung in this area.");
-        else if(inAdj) addOnce(nearby, "You notice signs of a trap being sprung nearby.");
-      }
-      if(e.type === "DEATH"){
-        if(inAdj) addOnce(nearby, "Someone died nearby today.");
-      }
-    }
-
-    const perceptionLines = [...sameArea, ...nearby];
-
-    const overlay = document.createElement("div");
-    overlay.className = "modalOverlay";
-    overlay.innerHTML = `
-      <div class="modal">
-        <div class="h1" style="margin:0;">End of day</div>
-        <div class="muted small" style="margin-top:6px;">Summary of what happened as the day ended.</div>
-
-        <div class="eventList" style="margin-top:12px;">
-          <div class="eventLine"><strong>${cannonCount}</strong> cannon shots could be heard.</div>
-          <div class="eventLine muted small" style="margin-top:6px;">The images of these tributes appeared in the sky.</div>
-          <div class="pillWrap" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
-            ${deadNames.length ? deadNames.map(n => `<span class="itemPill" style="cursor:default;">${escapeHtml(n)}</span>`).join("") : `<span class="muted small">No deaths today.</span>`}
-          </div>
-
-          ${perceptionLines.length ? `
-            <div class="eventLine" style="margin-top:10px;"><strong>What you noticed:</strong></div>
-            ${perceptionLines.map(t => `<div class="eventLine">${escapeHtml(t)}</div>`).join("")}
-          ` : ""}
-
-          ${dmgLines.length ? `
-            <div class="eventLine" style="margin-top:10px;"><strong>You were hurt as the day ended:</strong></div>
-            ${dmgLines.map(t => `<div class="eventLine">${escapeHtml(t)}</div>`).join("")}
-          ` : ""}
-        </div>
-
-        <div class="row" style="margin-top:14px; justify-content:flex-end;">
-          <button id="ok" class="btn primary">OK</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    overlay.querySelector("#ok").onclick = () => overlay.remove();
-    setTimeout(() => { if(document.body.contains(overlay)) overlay.remove(); }, 5000);
   }
 
   function shouldShowEndDayDialog(events){
