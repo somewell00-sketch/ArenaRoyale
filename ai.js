@@ -12,6 +12,11 @@ export function generateNpcIntents(world){
   const seed = Number(world?.meta?.seed ?? 1);
   const playerDistrict = world?.entities?.player?.district ?? null;
 
+  // COLLECT_DIVERSITY: per-area reservation counts for ground indices.
+  // Because intents are generated in a deterministic order, this is a cheap way
+  // to push NPCs toward different picks (still allowing disputes sometimes).
+  const reservedCollectByArea = new Map(); // areaId -> Map(itemIndex -> count)
+
   const npcs = Object.values(world?.entities?.npcs || {});
 
   for(const npc of npcs){
@@ -26,8 +31,15 @@ export function generateNpcIntents(world){
     const obs = buildObservedWorld(world, npc);
 
     // --- Posture/action intent ---
-    const actionIntent = decidePosture(world, npc, obs, traits, { seed, day, playerDistrict });
+    const actionIntent = decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, reservedCollectByArea });
     if(actionIntent) intents.push(actionIntent);
+    if(actionIntent?.type === "COLLECT"){
+      const aId = String(npc.areaId);
+      const idx = Number(actionIntent?.payload?.itemIndex ?? 0);
+      if(!reservedCollectByArea.has(aId)) reservedCollectByArea.set(aId, new Map());
+      const m = reservedCollectByArea.get(aId);
+      m.set(idx, (m.get(idx) || 0) + 1);
+    }
 
     // --- Movement intent ---
     const moveIntent = decideMove(world, npc, obs, traits, { seed, day });
@@ -81,13 +93,16 @@ function buildObservedWorld(world, npc){
   return { area, hereActors, adjacent };
 }
 
-function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
+function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, reservedCollectByArea }){
   if((npc.trappedDays ?? 0) > 0) return { source: npc.id, type: "NOTHING", payload: { reason: "trapped" } };
 
   const area = obs.area;
   const invN = inventoryCount(npc.inventory);
   const hasWater = !!area?.hasWater;
   const ground = Array.isArray(area?.groundItems) ? area.groundItems : [];
+
+  // Used to discourage identical item picks in the same day.
+  const reservedHere = reservedCollectByArea?.get(String(npc.areaId)) || null;
 
   // FORCE_COLLECT_CORN: Cornucopia scramble.
   // Cornucopia starts with lots of finite loot. If an NPC still has space,
@@ -105,18 +120,8 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
     const rForce = hash01(seed, day, `corn_collect|${npc.id}|${invN}|${ground.length}`);
     // For day 1–2, if they have space, we force the attempt (no RNG gate).
     if(day <= 2 || rForce < Math.min(0.98, baseChance + invBoost)){
-    const scoredItems = [];
-    for(let i=0;i<ground.length;i++){
-      const inst = ground[i];
-      const def = getItemDef(inst?.defId);
-      scoredItems.push({ idx: i, score: itemValue(def, inst) });
-    }
-    scoredItems.sort((a,b)=>b.score-a.score);
-    const topK = scoredItems.slice(0, Math.min(4, scoredItems.length));
-    const r = hash01(seed, day, `collect_pick|${npc.id}|corn`);
-    const pickPos = Math.floor(r * topK.length);
-    const chosen = topK[Math.max(0, Math.min(topK.length - 1, pickPos))];
-    return { source: npc.id, type: "COLLECT", payload: { itemIndex: chosen.idx } };
+      const idx = chooseGroundItemIndex(world, npc, ground, traits, { seed, day, reservedHere, inCorn:true });
+      return { source: npc.id, type: "COLLECT", payload: { itemIndex: idx } };
     }
   }
 
@@ -128,19 +133,30 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
   
   // Low FP: prioritize food. If there is an FP-restoring consumable on the ground, try to collect it.
   if((npc.fp ?? 0) <= 20 && ground.length && invN < INVENTORY_LIMIT){
-    let bestIdx = -1;
-    let bestGain = -1;
+    // Prefer FP restore, but keep it diverse (avoid all NPCs dogpiling the same exact index).
+    let bestGain = 0;
+    const gains = [];
     for(let i=0;i<ground.length;i++){
       const inst = ground[i];
       const def = getItemDef(inst?.defId);
       const gain = Number(def?.effects?.healFP ?? 0);
-      if(gain > bestGain){
-        bestGain = gain;
-        bestIdx = i;
+      if(gain > 0){
+        bestGain = Math.max(bestGain, gain);
+        gains.push({ idx: i, gain });
       }
     }
-    if(bestGain > 0 && bestIdx >= 0){
-      return { source: npc.id, type: "COLLECT", payload: { itemIndex: bestIdx } };
+    if(bestGain > 0 && gains.length){
+      const pool = gains
+        .filter(x => x.gain >= bestGain * 0.8)
+        .map(x => {
+          const resCount = reservedHere ? (reservedHere.get(x.idx) || 0) : 0;
+          const penalty = Math.min(0.60, resCount * 0.35);
+          const jitter = (hash01(seed, day, `fp_pick|${npc.id}|${x.idx}`) - 0.5) * 0.20;
+          return { idx: x.idx, w: Math.max(0.001, (x.gain / 20) + 0.35 - penalty + jitter) };
+        });
+      const r = hash01(seed, day, `fp_pick_roll|${npc.id}|${npc.areaId}`);
+      const picked = weightedPick(pool, r, 0.8);
+      return { source: npc.id, type: "COLLECT", payload: { itemIndex: Number(picked?.idx ?? pool[0]?.idx ?? 0) } };
     }
   }
 
@@ -148,15 +164,8 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
   if(ground.length && invN < INVENTORY_LIMIT){
     const r = hash01(seed, day, `npc_collect_bias|${npc.id}`);
     if(r < (0.10 + traits.greed * 0.35)){
-      let bestIdx = 0;
-      let bestScore = -1e9;
-      for(let i=0;i<ground.length;i++){
-        const inst = ground[i];
-        const def = getItemDef(inst?.defId);
-        const score = itemValue(def, inst);
-        if(score > bestScore){ bestScore = score; bestIdx = i; }
-      }
-      return { source: npc.id, type: "COLLECT", payload: { itemIndex: bestIdx } };
+      const idx = chooseGroundItemIndex(world, npc, ground, traits, { seed, day, reservedHere, inCorn });
+      return { source: npc.id, type: "COLLECT", payload: { itemIndex: idx } };
     }
   }
 
@@ -474,6 +483,58 @@ function itemValue(def, inst){
     return base;
   }
   return 0.15;
+}
+
+function chooseGroundItemIndex(world, npc, ground, traits, { seed, day, reservedHere, inCorn }){
+  if(!Array.isArray(ground) || ground.length === 0) return 0;
+
+  const fp = Number(npc.fp ?? 70);
+  const invItems = Array.isArray(npc.inventory?.items) ? npc.inventory.items : [];
+
+  const scored = [];
+  for(let i=0;i<ground.length;i++){
+    const inst = ground[i];
+    const def = getItemDef(inst?.defId);
+    let score = itemValue(def, inst);
+
+    // Light role preference (kept small so variety still happens).
+    if(def?.type === ItemTypes.WEAPON) score += traits.aggression * 0.10;
+    if(def?.type === ItemTypes.PROTECTION) score += traits.caution * 0.08;
+    if(def?.type === ItemTypes.CONSUMABLE && fp <= 25) score += 0.18;
+
+    // If already carrying the same item (and it's not stackable), reduce interest.
+    const alreadyHas = invItems.some(it => it?.defId === inst?.defId);
+    if(alreadyHas && !def?.stackable) score -= 0.22;
+
+    // Reservation penalty: discourage multiple NPCs aiming for the same exact index.
+    const resCount = reservedHere ? (reservedHere.get(i) || 0) : 0;
+    if(resCount > 0) score -= Math.min(0.60, resCount * 0.35);
+
+    // Deterministic jitter to break ties and add variety.
+    const jitter = (hash01(seed, day, `item_jitter|${npc.id}|${i}|${inst?.defId}`) - 0.5) * 0.36; // -0.18..+0.18
+    score += jitter;
+
+    scored.push({ idx: i, score });
+  }
+
+  scored.sort((a,b)=>b.score-a.score);
+
+  // Pick from a wider top-K using a weighted pick.
+  const k = Math.min(10, scored.length);
+  const pool = scored.slice(0, k).map((x, j) => ({
+    idx: x.idx,
+    // Ensure all weights positive.
+    w: Math.max(0.001, x.score + 0.35 - (j * 0.01))
+  }));
+
+  // Cornucopia early = higher temperature (more chaos/variety).
+  let temp = inCorn ? (day <= 3 ? 0.95 : 0.65) : 0.55;
+  // Greedy NPCs focus a bit more; cautious NPCs are more exploratory.
+  temp = clamp01(temp + (0.12 * (traits.caution - traits.greed)));
+
+  const r = hash01(seed, day, `collect_pick|${npc.id}|${npc.areaId}|${ground.length}`);
+  const picked = weightedPick(pool, r, temp);
+  return Number(picked?.idx ?? pool[0]?.idx ?? 0);
 }
 
 function maxStepsForNpc(npc){

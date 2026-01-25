@@ -733,23 +733,20 @@ export function commitPlayerAction(world, action){
     }
 
     // Determine NPC contenders who are also trying to collect this same ground item today.
-    // We mirror the NPC intent generator to keep this deterministic and single-player friendly.
+    // IMPORTANT: Use the actual NPC AI intent generator so this stays consistent
+    // with any changes to item-picking diversity.
     const contenders = [{ id:"player", actor: player }];
-    for(const npc of Object.values(next.entities.npcs || {})){
-      if((npc.hp ?? 0) <= 0) continue;
+    const npcIntents = generateNpcIntents(next);
+    const collectingHere = (npcIntents || []).filter(a => a?.type === "COLLECT" && a?.source);
+    for(const act of collectingHere){
+      const who = act.source;
+      if(!who || who === "player") continue;
+      const npc = next.entities.npcs?.[who];
+      if(!npc || (npc.hp ?? 0) <= 0) continue;
       if(npc.areaId !== player.areaId) continue;
-
-      const npcArea = next.map.areasById[String(npc.areaId)];
-      const ground = Array.isArray(npcArea?.groundItems) ? npcArea.groundItems : [];
-      if(!ground.length) continue;
-
-      const invCount = inventoryCount(npc.inventory);
-      const rCollect = prng(seed, day, `collect_${npc.id}`);
-      if(invCount < INVENTORY_LIMIT && rCollect < 0.25){
-        const pickIdx = Math.floor(prng(seed+1337, day, `collect_pick_${npc.id}`) * ground.length);
-        if(pickIdx === idx){
-          contenders.push({ id: npc.id, actor: npc });
-        }
+      const wantIdx = Number(act.payload?.itemIndex ?? -1);
+      if(wantIdx === idx){
+        contenders.push({ id: npc.id, actor: npc });
       }
     }
 
@@ -1723,7 +1720,7 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
     events.push({ type:"DEATH", who:"player", areaId: playerNow.areaId, reason:"area_closed" });
   }
 
-  next.log.days.push({ day, aiPhase: next.meta?.aiPhase || null, events });
+  next.log.days.push({ day, events });
 
   return next;
 }
