@@ -1,5 +1,5 @@
 import { MapSize, createInitialWorld } from "./state.js";
-import { generateMapData } from "./mapgen.js";
+import { generateMapData, BIOME_BG } from "./mapgen.js";
 import { MapUI } from "./mapui.js";
 import { commitPlayerAction, useInventoryItem, moveActorOneStep, endDay } from "./sim.js";
 import { getItemDef, getItemIcon, ItemTypes, displayDamageLabel, inventoryCount, INVENTORY_LIMIT, itemsReady } from "./items.js";
@@ -105,6 +105,164 @@ function pickDeterministic(list, key){
   if(!list || list.length === 0) return "";
   const idx = hash32(key) % list.length;
   return list[idx];
+}
+
+// --- Procedural biome background texture (no image assets) ---
+// Applied to .canvasWrap as: [biome color overlay] + [generated texture].
+// Cached by (biome, variant) so it is generated once per session.
+const BIOME_TEXTURES = {
+  glacier:    { grain: 0.20, streaks: 0.70, spots: 0.05, grid: 0.00 },
+  tundra:     { grain: 0.25, streaks: 0.35, spots: 0.10, grid: 0.00 },
+  mountain:   { grain: 0.22, streaks: 0.30, spots: 0.20, grid: 0.00 },
+  desert:     { grain: 0.25, streaks: 0.60, spots: 0.05, grid: 0.00 },
+  caatinga:   { grain: 0.28, streaks: 0.45, spots: 0.12, grid: 0.00 },
+  savanna:    { grain: 0.22, streaks: 0.40, spots: 0.10, grid: 0.00 },
+  plains:     { grain: 0.20, streaks: 0.45, spots: 0.08, grid: 0.00 },
+  woods:      { grain: 0.30, streaks: 0.15, spots: 0.45, grid: 0.00 },
+  forest:     { grain: 0.35, streaks: 0.10, spots: 0.55, grid: 0.00 },
+  jungle:     { grain: 0.38, streaks: 0.08, spots: 0.65, grid: 0.00 },
+  fairy:      { grain: 0.22, streaks: 0.18, spots: 0.28, grid: 0.00 },
+  swamp:      { grain: 0.35, streaks: 0.10, spots: 0.65, grid: 0.00 },
+  lake:       { grain: 0.15, streaks: 0.25, spots: 0.35, grid: 0.00 },
+  industrial: { grain: 0.20, streaks: 0.15, spots: 0.10, grid: 0.80 },
+  cornucopia: { grain: 0.18, streaks: 0.20, spots: 0.12, grid: 0.25 },
+  default:    { grain: 0.25, streaks: 0.20, spots: 0.15, grid: 0.00 },
+};
+
+const biomeTexCache = new Map(); // key: `${biome}:${variant}` => dataURL
+
+function mulberry32(seed){
+  let a = seed >>> 0;
+  return function(){
+    let t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+
+function hexToRgba(hex, alpha){
+  const h = String(hex || "").trim();
+  if(!h.startsWith("#") || (h.length !== 7)) return `rgba(0,0,0,${alpha})`;
+  const r = parseInt(h.slice(1,3), 16);
+  const g = parseInt(h.slice(3,5), 16);
+  const b = parseInt(h.slice(5,7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function makeBiomeOverlay(biome){
+  const bg = BIOME_BG?.[biome] || BIOME_BG?.default || ["#0b0f1a", "#0b0f1a"];
+  const c1 = hexToRgba(bg[0], 0.55);
+  const c2 = hexToRgba(bg[1], 0.55);
+  return `linear-gradient(180deg, ${c1}, ${c2})`;
+}
+
+function makeTextureDataURL(biome, seedBase, variant, size = 256){
+  const recipe = BIOME_TEXTURES[biome] || BIOME_TEXTURES.default;
+  const rnd = mulberry32((seedBase ^ ((variant + 1) * 9973)) >>> 0);
+
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+
+  const img = ctx.createImageData(size, size);
+  const d = img.data;
+
+  const grain = recipe.grain ?? 0.25;
+  const streaks = recipe.streaks ?? 0.20;
+  const spots = recipe.spots ?? 0.15;
+  const grid = recipe.grid ?? 0.00;
+
+  // streak direction: glacier/tundra diagonal; desert/plains more horizontal; others mixed
+  const angle = (biome === "glacier" || biome === "tundra") ? (Math.PI / 4)
+    : (biome === "desert" || biome === "plains" || biome === "savanna" || biome === "caatinga") ? (Math.PI / 2)
+    : (Math.PI / 3);
+  const ax = Math.cos(angle);
+  const ay = Math.sin(angle);
+
+  // blobs
+  const blobCount = Math.floor(8 + 22 * spots);
+  const blobs = [];
+  for(let i=0;i<blobCount;i++){
+    blobs.push({
+      x: rnd() * size,
+      y: rnd() * size,
+      r: (0.06 + rnd() * 0.22) * size,
+      s: 0.5 + rnd() * 0.9,
+    });
+  }
+
+  for(let y=0;y<size;y++){
+    for(let x=0;x<size;x++){
+      const idx = (y * size + x) * 4;
+
+      // grain
+      let v = (rnd() - 0.5) * 2 * grain;
+
+      // streaks (wave along chosen axis)
+      if(streaks > 0){
+        const t = (x * ax + y * ay) / size;
+        v += Math.sin((t * 10 + rnd() * 2) * Math.PI * 2) * 0.5 * streaks;
+      }
+
+      // spots/blobs
+      if(spots > 0){
+        let b = 0;
+        for(let i=0;i<blobs.length;i++){
+          const dx = x - blobs[i].x;
+          const dy = y - blobs[i].y;
+          const dist2 = dx*dx + dy*dy;
+          const rr = blobs[i].r * blobs[i].r;
+          b += Math.exp(-dist2 / rr) * blobs[i].s;
+        }
+        v += (b / blobs.length) * spots;
+      }
+
+      // industrial grid / scanlines
+      if(grid > 0){
+        const gx = (x % 24) === 0 || (x % 24) === 1;
+        const gy = (y % 24) === 0 || (y % 24) === 1;
+        const line = (gx || gy) ? 0.9 : 0;
+        v += line * grid;
+      }
+
+      // convert to alpha: a subtle darkening texture over the biome overlay
+      const a = clamp01(Math.abs(v)) * 0.35;
+      d[idx + 0] = 0;
+      d[idx + 1] = 0;
+      d[idx + 2] = 0;
+      d[idx + 3] = Math.floor(a * 255);
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  return c.toDataURL("image/png");
+}
+
+function applyBiomeBackground(){
+  if(!world) return;
+  const wrap = document.querySelector(".canvasWrap");
+  if(!wrap) return;
+  const p = world?.entities?.player;
+  if(!p) return;
+  const a = world?.map?.areasById?.[String(p.areaId)];
+  const biome = String(a?.biome || "default").toLowerCase();
+
+  const day = Number(world?.meta?.day ?? 0);
+  const seedBase = hash32(`${day}:${p.areaId}:${biome}:${world?.meta?.seed ?? 0}`);
+  const variant = seedBase % 5;
+  const key = `${biome}:${variant}`;
+  let tex = biomeTexCache.get(key);
+  if(!tex){
+    tex = makeTextureDataURL(biome, seedBase, variant, 256);
+    biomeTexCache.set(key, tex);
+  }
+
+  const overlay = makeBiomeOverlay(biome);
+  wrap.style.backgroundImage = `${overlay}, url("${tex}")`;
 }
 
 function hpSignal(hp, key){
@@ -1116,6 +1274,9 @@ function renderGame(){
     const p = world.entities.player;
 
     curAreaEl.textContent = String(p.areaId);
+
+    // Background texture for the current biome (keeps biome colors via overlay)
+    applyBiomeBackground();
 
     renderInventory();
     renderGroundItem();

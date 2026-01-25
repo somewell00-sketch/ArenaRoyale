@@ -71,6 +71,11 @@ a{ color: var(--accent); }
   overflow:hidden;
   border: 1px solid rgba(250,208,44,0.18);
   box-shadow: var(--shadow);
+
+  /* Biome backgrounds: overlay gradient + procedural texture */
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, repeat;
 }
 
 /* Prevent touch scrolling while dragging the map on mobile */
