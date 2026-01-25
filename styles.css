@@ -318,6 +318,13 @@ textarea{
 
 .panelHeader{ display:flex; flex-direction:column; gap:2px; }
 
+.fallenTributes{
+  font-size: 13px;
+  opacity: 0.72;
+  margin-top: 2px;
+  letter-spacing: 0.4px;
+}
+
 .hidden{ display:none !important; }
 
 .alert{

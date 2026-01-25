@@ -549,6 +549,12 @@ function renderGame(){
       <aside class="panel" id="leftPanel">
         <div class="panelHeader">
           <div class="h1" style="margin:0;">${(world && world.map && world.map.arenaName) ? world.map.arenaName : "Survival Arena"}</div>
+          <div class="fallenTributes" id="fallenTributes">${(() => {
+            const npcs = world?.entities?.npcs || {};
+            const ids = Object.keys(npcs);
+            const fallen = ids.filter(id => (npcs[id]?.hp ?? 0) <= 0).length;
+            return `${fallen} fallen tributes`;
+          })()}</div>
           <div class="muted small">Day <span id="day"></span> • Area <span id="curArea"></span></div>
         </div>
 
