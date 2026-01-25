@@ -240,6 +240,30 @@ export function removeInventoryItem(inv, index){
   return removed;
 }
 
+// Remove inventory entries by item definition id (optionally with quantity).
+// This is the safe counterpart to removeInventoryItem (which removes by index).
+// Returns the removed instance (with qty removed) or null if not found.
+export function removeInventoryByDefId(inv, defId, qty = 1){
+  if(!inv || !Array.isArray(inv.items)) return null;
+  if(!defId) return null;
+  const q = Math.max(1, Number(qty || 1));
+
+  const idx = (inv.items || []).findIndex(it => it?.defId === defId);
+  if(idx === -1) return null;
+
+  const it = inv.items[idx];
+  const def = getItemDef(it.defId);
+  const stackable = Boolean(def?.stackable);
+  const curQty = Math.max(1, Number(it.qty || 1));
+
+  if(stackable && curQty > q){
+    it.qty = curQty - q;
+    return { ...it, qty: q };
+  }
+  // Remove entire entry (either non-stackable, or consuming the last stack).
+  return removeInventoryItem(inv, idx);
+}
+
 export function strongestWeaponInInventory(inv, { forDispute = false } = {}){
   let best = null;
   for(const it of (inv?.items || [])){

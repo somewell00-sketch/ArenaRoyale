@@ -10,6 +10,7 @@ import {
   inventoryCount,
   addToInventory,
   removeInventoryItem,
+  removeInventoryByDefId,
   strongestWeaponInInventory,
   weaponByRank,
   isPoisonWeapon
@@ -1068,7 +1069,7 @@ export function commitPlayerAction(world, action){
       return finalize();
     }
     // Consume one trap item from inventory.
-    const rem = removeInventoryItem(player.inventory, trapDefId, 1);
+    const rem = removeInventoryByDefId(player.inventory, trapDefId, 1);
     if(!rem.ok){
       events.push({ type:"TRAP_SET", ok:false, reason:"missing_item", trapDefId });
       return finalize();
@@ -1094,7 +1095,7 @@ export function commitPlayerAction(world, action){
       events.push({ type:"CUT_NET", ok:false, reason:"no_dagger" });
       return finalize();
     }
-    removeInventoryItem(player.inventory, "dagger", 1);
+    removeInventoryByDefId(player.inventory, "dagger", 1);
     player.trappedDays = 0;
     events.push({ type:"CUT_NET", ok:true, areaId: player.areaId });
     return finalize();
@@ -1578,7 +1579,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
         events.push({ type:"TRAP_SET", ok:false, who: a.id, reason:"invalid_trap", areaId: a.areaId });
         continue;
       }
-      const rem = removeInventoryItem(a.inventory, trapDefId, 1);
+      const rem = removeInventoryByDefId(a.inventory, trapDefId, 1);
       if(!rem.ok){
         events.push({ type:"TRAP_SET", ok:false, who: a.id, reason:"missing_item", trapDefId, areaId: a.areaId });
         continue;
