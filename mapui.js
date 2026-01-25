@@ -521,19 +521,38 @@ export class MapUI {
       tx = (cw / 2) - (px * s);
       ty = (ch / 2) - (py * s);
 
-      // Apply user pan (dragging) in canvas space.
-      if(!!this.options.draggable){
-        tx += (Number(this._pan?.x) || 0);
-        ty += (Number(this._pan?.y) || 0);
+      // Apply user pan (dragging) in canvas space, but keep it stable when clamping.
+      const panX = (!!this.options.draggable) ? (Number(this._pan?.x) || 0) : 0;
+      const panY = (!!this.options.draggable) ? (Number(this._pan?.y) || 0) : 0;
+
+      const contentW = gw * s;
+      const contentH = gh * s;
+
+      // If the scaled map already fits inside the canvas, keep it centered and ignore pan/clamp.
+      if(contentW + pad * 2 <= cw){
+        tx = (cw - contentW) / 2;
+        if(!!this.options.draggable) this._pan.x = 0;
+      } else {
+        const unclampedTx = tx + panX;
+        const minTx = cw - contentW - pad;
+        const maxTx = pad;
+        const clampedTx = Math.max(minTx, Math.min(maxTx, unclampedTx));
+        // Prevent "random jumps" at edges by folding clamp back into pan.
+        if(!!this.options.draggable) this._pan.x += (clampedTx - unclampedTx);
+        tx = clampedTx;
       }
 
-      // Clamp so the map doesn't drift too far outside the canvas.
-      const minTx = cw - (gw * s) - pad;
-      const maxTx = pad;
-      const minTy = ch - (gh * s) - pad;
-      const maxTy = pad;
-      tx = Math.max(minTx, Math.min(maxTx, tx));
-      ty = Math.max(minTy, Math.min(maxTy, ty));
+      if(contentH + pad * 2 <= ch){
+        ty = (ch - contentH) / 2;
+        if(!!this.options.draggable) this._pan.y = 0;
+      } else {
+        const unclampedTy = ty + panY;
+        const minTy = ch - contentH - pad;
+        const maxTy = pad;
+        const clampedTy = Math.max(minTy, Math.min(maxTy, unclampedTy));
+        if(!!this.options.draggable) this._pan.y += (clampedTy - unclampedTy);
+        ty = clampedTy;
+      }
     }
 
     return { s, tx, ty, geomW: gw, geomH: gh, canvasW: cw, canvasH: ch };
