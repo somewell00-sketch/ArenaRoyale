@@ -541,6 +541,7 @@ function renderGame(){
       </aside>
     <main class="canvasWrap">
         <canvas id="c" width="820" height="820"></canvas>
+        <canvas id="mini" width="200" height="200" class="minimap" aria-label="Minimap"></canvas>
         <div id="areaInfo" class="areaInfo">—</div>
         <div id="toastHost" class="toastHost" aria-live="polite" aria-relevant="additions"></div>
         <div class="hint">Cornucopia is Area 1 • Select an area to inspect • Move only after committing an action</div>
@@ -698,6 +699,20 @@ function renderGame(){
     canvas,
     getCurrentAreaId: () => world?.entities?.player?.areaId ?? 1,
     canMove: () => uiState.phase === "explore",
+    options: { followPlayer: true, zoom: 2.15, padding: 18 },
+    onAreaClick: (id) => {
+      uiState.focusedAreaId = id;
+      handleAreaClick(id);
+      sync();
+    }
+  });
+
+  const miniCanvas = document.getElementById("mini");
+  const miniMapUI = new MapUI({
+    canvas: miniCanvas,
+    getCurrentAreaId: () => world?.entities?.player?.areaId ?? 1,
+    canMove: () => uiState.phase === "explore",
+    options: { followPlayer: false, showViewport: true, getViewportRect: () => mapUI.getViewRectGeom() },
     onAreaClick: (id) => {
       uiState.focusedAreaId = id;
       handleAreaClick(id);
@@ -1223,6 +1238,11 @@ function renderGame(){
 
     mapUI.setData({ world, paletteIndex: 0 });
     mapUI.render();
+    // Minimap (full view + viewport rectangle)
+    if(miniMapUI){
+      miniMapUI.setData({ world, paletteIndex: 0 });
+      miniMapUI.render();
+    }
 
     // If player died, lock controls
     const dead = (p.hp ?? 0) <= 0;
@@ -1445,6 +1465,7 @@ function renderGame(){
   };
 
   mapUI.setData({ world, paletteIndex: 0 });
+  if(miniMapUI) miniMapUI.setData({ world, paletteIndex: 0 });
   sync();
 
   // Prevent opening multiple death dialogs.
