@@ -127,9 +127,15 @@ export class MapUI {
     this._drag = { active: false, moved: false, startX: 0, startY: 0, lastX: 0, lastY: 0 };
 
     this.hoveredId = null;
+    // Last mouse position in canvas pixels (used to anchor tooltips).
+    this._mouse = { cx: 0, cy: 0, has: false };
 
     canvas.addEventListener("mousemove", (e) => this.handleMove(e));
-    canvas.addEventListener("mouseleave", () => { this.hoveredId = null; this.render(); });
+    canvas.addEventListener("mouseleave", () => {
+      this.hoveredId = null;
+      if(this._mouse) this._mouse.has = false;
+      this.render();
+    });
     canvas.addEventListener("click", (e) => this.handleClick(e));
 
     // Pointer events for dragging (safer across mouse/touch)
@@ -174,10 +180,18 @@ export class MapUI {
   }
 
   handleMove(e){
-    const {x,y} = this.canvasToWorld(e);
+    const {x,y,cx,cy} = this.canvasToWorld(e);
     const id = this.hitTest(x,y);
+
+    // Hover/tooltip should work for *any* area under the cursor (even if not currently visitable).
+    // Clicking is still restricted by canMove() + isVisitable().
+    const nextHover = (id != null) ? id : null;
+
+    this._mouse.cx = cx;
+    this._mouse.cy = cy;
+    this._mouse.has = (id != null);
+
     const enabled = !!this.canMove();
-    const nextHover = (enabled && id != null && this.isVisitable(id)) ? id : null;
     if(nextHover !== this.hoveredId){
       this.hoveredId = nextHover;
       this.render();
@@ -197,6 +211,134 @@ export class MapUI {
     if(!enabled) return;
     if(!this.isVisitable(id)) return;
     this.onAreaClick(id);
+  }
+
+  // --- Tooltip helpers ---
+  _noiseNarrative(level){
+    switch(String(level || "").toLowerCase()){
+      case "highly_noisy":
+        return "The air is loud and tense. Something is hunting.";
+      case "noisy":
+        return "You hear movement nearby. This place won’t stay quiet.";
+      case "quiet":
+      default:
+        return "Only wind and stillness, for now.";
+    }
+  }
+
+  _areaStatusNarrative(area, day){
+    if(!area) return null;
+    if(area.isActive === false) return "Sealed territory. Entry is impossible.";
+    if(Number(area.willCloseOnDay) === Number(day) + 1) return "Warning: the zone may seal by tomorrow.";
+    return "Open territory.";
+  }
+
+  _getTooltipLines(areaId){
+    const area = this.world?.map?.areasById?.[String(areaId)] || null;
+    const visited = new Set(this.world?.flags?.visitedAreas || []).has(areaId);
+    const day = Number(this.world?.meta?.day ?? 1);
+
+    // Unknown areas: keep it explicit and simple.
+    if(!visited || !area){
+      return [
+        `Area ${areaId}`,
+        "Uncharted territory.",
+        "Biome: Unknown",
+        "Noise: Unknown",
+        "Other details are unclear."
+      ];
+    }
+
+    const biomeKey = String(area.biome || "");
+    const biomeLabel = BIOME_PT[biomeKey] || biomeKey || "Unknown";
+    const noiseState = area.noiseState || "quiet";
+
+    const lines = [];
+    lines.push(`Area ${areaId}`);
+    lines.push(`Biome: ${biomeLabel}`);
+    lines.push(this._noiseNarrative(noiseState));
+
+    const st = this._areaStatusNarrative(area, day);
+    if(st) lines.push(st);
+
+    if(area.hasWater) lines.push("Water is present here.");
+
+    // Optional: add short flavor cues if present.
+    const flavor = area?.flavorText || null;
+    if(typeof flavor === "string" && flavor.trim()) lines.push(flavor.trim());
+
+    return lines;
+  }
+
+  _drawTooltip(){
+    if(!this._mouse?.has) return;
+    if(this.hoveredId == null) return;
+    if(!this.world) return;
+
+    const ctx = this.ctx;
+    const lines = this._getTooltipLines(this.hoveredId);
+    if(!lines || !lines.length) return;
+
+    // Layout in canvas space.
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+
+    const pad = 10;
+    const lineH = 18;
+    const maxW = 340;
+
+    ctx.font = "600 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+
+    // Measure width.
+    let w = 0;
+    for(const t of lines){
+      w = Math.max(w, ctx.measureText(String(t)).width);
+    }
+    w = Math.min(maxW, Math.ceil(w));
+    const h = pad*2 + lineH*lines.length;
+
+    // Anchor near cursor but keep on-screen.
+    let x = (Number(this._mouse.cx) || 0) + 14;
+    let y = (Number(this._mouse.cy) || 0) + 14;
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    const boxW = w + pad*2;
+    const boxH = h;
+    if(x + boxW > cw - 8) x = cw - boxW - 8;
+    if(y + boxH > ch - 8) y = ch - boxH - 8;
+    x = Math.max(8, x);
+    y = Math.max(8, y);
+
+    // Background
+    ctx.fillStyle = "rgba(12,12,14,0.88)";
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    const r = 10;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + boxW, y, x + boxW, y + boxH, r);
+    ctx.arcTo(x + boxW, y + boxH, x, y + boxH, r);
+    ctx.arcTo(x, y + boxH, x, y, r);
+    ctx.arcTo(x, y, x + boxW, y, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Text
+    let ty = y + pad + 2;
+    for(let i=0;i<lines.length;i++){
+      const t = String(lines[i]);
+      if(i === 0){
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.font = "700 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+      } else {
+        ctx.fillStyle = "rgba(235,235,238,0.90)";
+        ctx.font = "500 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+      }
+      ctx.fillText(t, x + pad, ty + i*lineH);
+    }
+
+    ctx.restore();
   }
 
   getViewRectGeom(){
@@ -530,6 +672,126 @@ export class MapUI {
     vg.addColorStop(1, "rgba(0,0,0,0.45)");
     ctx.fillStyle = vg;
     ctx.fillRect(0,0,canvasW,canvasH);
+
+    // Tooltip (in canvas space)
+    this._drawTooltip(ctx);
+  }
+
+  _getTooltipLines(areaId){
+    const area = this.world?.map?.areasById?.[String(areaId)] || null;
+    if(!area) return null;
+
+    const day = Number(this.world?.meta?.day ?? 1);
+    const visited = new Set(this.world?.flags?.visitedAreas || []).has(areaId);
+
+    const title = `Area ${areaId}`;
+    if(!visited){
+      return [
+        title,
+        "Unknown territory.",
+        "Information is unclear until you enter.",
+        "Biome: Unknown",
+        "Noise: Unknown"
+      ];
+    }
+
+    const biomeKey = area.biome;
+    const biomeName = BIOME_PT[biomeKey] || biomeKey || "Unknown";
+
+    const noise = String(area.noiseState || "quiet");
+    let noiseLine = "The air is still.";
+    let noiseTag = "Quiet";
+    if(noise === "noisy"){
+      noiseTag = "Noisy";
+      noiseLine = "You catch faint movement and distant voices.";
+    } else if(noise === "highly_noisy"){
+      noiseTag = "Highly Noisy";
+      noiseLine = "The arena is loud here. Something is hunting.";
+    }
+
+    const lines = [title, `Biome: ${biomeName}`, `Noise: ${noiseTag}`, noiseLine];
+
+    if(area.hasWater) lines.push("Water: You spot usable water.");
+    else lines.push("Water: No clear source.");
+
+    const isClosed = (area.isActive === false);
+    const isWarning = (area.willCloseOnDay === (day + 1));
+    if(isClosed) lines.push("Status: Sealed off.");
+    else if(isWarning) lines.push("Status: The barrier shifts tomorrow.");
+
+    // Optional short flavor cues if present.
+    const flavor = (typeof area.flavor === "string" && area.flavor.trim()) ? area.flavor.trim() : null;
+    if(flavor) lines.push(flavor);
+
+    return lines;
+  }
+
+  _drawTooltip(ctx){
+    if(!this._mouse?.has) return;
+    if(this.hoveredId == null) return;
+
+    const lines = this._getTooltipLines(this.hoveredId);
+    if(!lines || !lines.length) return;
+
+    const pad = 10;
+    const lineH = 16;
+    const maxW = 340;
+
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.font = "600 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+
+    // Measure width
+    let w = 0;
+    for(const s of lines){
+      w = Math.max(w, ctx.measureText(String(s)).width);
+    }
+    w = Math.min(maxW, Math.ceil(w));
+    const h = pad*2 + lineH * lines.length;
+
+    // Anchor near cursor, clamp within canvas
+    const cw = this.canvas.width;
+    const ch = this.canvas.height;
+    let x = (Number(this._mouse.cx) || 0) + 14;
+    let y = (Number(this._mouse.cy) || 0) + 14;
+    if(x + w + pad*2 > cw) x = cw - (w + pad*2) - 8;
+    if(y + h > ch) y = ch - h - 8;
+    x = Math.max(8, x);
+    y = Math.max(8, y);
+
+    // Background
+    ctx.fillStyle = "rgba(10,12,16,0.88)";
+    ctx.strokeStyle = "rgba(255,255,255,0.14)";
+    ctx.lineWidth = 1;
+    const r = 10;
+    ctx.beginPath();
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w+pad*2, y, x+w+pad*2, y+h, r);
+    ctx.arcTo(x+w+pad*2, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w+pad*2, y, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+
+    // First line as title (slightly brighter)
+    let ty = y + pad;
+    ctx.font = "700 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+    ctx.fillText(String(lines[0]), x + pad, ty);
+    ty += lineH;
+
+    ctx.font = "500 13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif";
+    for(let i=1;i<lines.length;i++){
+      ctx.fillText(String(lines[i]), x + pad, ty);
+      ty += lineH;
+    }
+
+    ctx.restore();
   }
 
   render(){
