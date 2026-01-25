@@ -217,6 +217,11 @@ let bestAttack = null;
   const strongestIdInArea = canCoalition ? strongestActorId(areaActors) : null;
   const selfIsStrongest = (strongestIdInArea != null) && (strongestIdInArea === npc.id);
 
+  // District bloc heuristic:
+  // - Higher-ranked districts (1..4) are more likely to play together.
+  // - They preferentially target outsiders, but will betray if an "ally" is weak or too threatening.
+  const npcIsHigh = isHighDistrict(npc.district);
+
   for(const t of targets){
     // District bias: less likely to attack same district and less likely to attack player's district.
     const sameDistrict = (t.district != null && npc.district != null && t.district === npc.district);
@@ -239,6 +244,35 @@ let bestAttack = null;
     if(sameDistrict) score -= isChaos ? 0.18 : 0.35;
     if(playerDistrictBias && t.id !== "player") score -= isChaos ? 0.05 : 0.12;
 
+    // Normalize kills once for both threat-focus and bloc betrayal rules.
+    const killFrac = clamp01(Number(t.kills ?? 0) / maxKills);
+
+    // District bloc behavior (soft preference, never absolute):
+    // High districts cooperate more, targeting outsiders... but betrayal is always on the table.
+    const targetIsHigh = isHighDistrict(t.district);
+    if(npcIsHigh){
+      // Prefer attacking outside the bloc.
+      const highVsHighPenalty = isStrategic ? 0.28 : (isChaosLate ? 0.18 : 0.12);
+      const highVsLowBonus = isStrategic ? 0.22 : (isChaosLate ? 0.18 : 0.10);
+      if(targetIsHigh){
+        score -= highVsHighPenalty;
+        // Betrayal triggers: if the ally is weak OR has become a big threat, reduce the penalty heavily.
+        const betray = isStrategic && (((t.hp ?? 100) <= 45) || (killFrac >= 0.55));
+        if(betray) score += highVsHighPenalty * 0.70; // undo most of the bloc penalty
+      } else {
+        score += highVsLowBonus;
+      }
+    } else {
+      // Lower districts are a bit more hesitant to pick fights with the bloc...
+      // ...but will join dogpiles against the strongest when they have numbers.
+      if(targetIsHigh){
+        score -= isStrategic ? 0.08 : 0.12;
+        if(canCoalition && !selfIsStrongest && strongestIdInArea && t.id === strongestIdInArea){
+          score += isStrategic ? 0.25 : 0.15;
+        }
+      }
+    }
+
     // Cowardice: they still like finishing weak targets.
     const hpFrac = clamp01((t.hp ?? 100) / 100);
     const weakBonus = (1 - hpFrac) * (isStrategic ? 0.28 : 0.40);
@@ -246,7 +280,6 @@ let bestAttack = null;
     if((t.hp ?? 100) <= 35) score += isStrategic ? 0.20 : 0.32;
 
     // Threat focus: higher kill count draws attention (especially in STRATEGIC and late-game CHAOS).
-    const killFrac = clamp01(Number(t.kills ?? 0) / maxKills);
     const killFocus = (isStrategic ? 0.55 : (isChaosLate ? 0.65 : 0.30));
     score += killFrac * killFocus;
 
@@ -276,7 +309,10 @@ let bestAttack = null;
   }
 
   // Defensive posture shifts with phase.
-  const defendScore = (isStrategic ? 0.42 : 0.28) + traits.caution * (isStrategic ? 0.55 : 0.35) + fearFactor(npc) * (isStrategic ? 0.70 : 0.45);
+  const defendScore = (isStrategic ? 0.42 : 0.28)
+    + traits.caution * (isStrategic ? 0.55 : 0.35)
+    + fearFactor(npc) * (isStrategic ? 0.70 : 0.45)
+    + (traits.sneaky ?? 0) * (isStrategic ? 0.25 : 0.10);
   const nothingScore = isChaos ? 0.05 : 0.15;
 
   // If they have no visible targets, bias to defend.
@@ -417,7 +453,8 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     if(other._today?.invisible) continue;
     crowd++;
   }
-  let crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03) + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
+  let crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03 + (traits.sneaky ?? 0) * 0.04)
+    + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
   // Early Cornucopia: allow crowding so more NPCs contest loot.
   if(Number(areaId) === 1 && day === 1) crowdPenalty *= 0.2;
 
@@ -573,10 +610,24 @@ function makeTraits(seed, id, district){
   const a = hash01(seed, 0, `trait_aggr|${id}|${district}`);
   const g = hash01(seed, 0, `trait_greed|${id}|${district}`);
   const c = hash01(seed, 0, `trait_caut|${id}|${district}`);
+
+  // District style bias:
+  // - District 1 tends to be more aggressive.
+  // - District 12 tends to be more cautious/sneaky.
+  const d = Math.max(1, Math.min(12, Number(district) || 12));
+  const t = (d - 1) / 11; // 0 at D1, 1 at D12
+  const aggrBias = (1 - t) * 0.35;
+  const cautBias = t * 0.35;
+  const sneakyBias = t * 0.40;
+
+  const s = hash01(seed, 0, `trait_sneaky|${id}|${district}`);
+
   return {
-    aggression: 0.25 + a * 0.75,
-    greed: 0.15 + g * 0.85,
-    caution: 0.20 + c * 0.80
+    aggression: clamp01(0.25 + a * 0.75 + aggrBias),
+    greed: clamp01(0.15 + g * 0.85),
+    caution: clamp01(0.20 + c * 0.80 + cautBias),
+    // Sneaky affects: willingness to avoid crowded areas and preference for low-risk finishes.
+    sneaky: clamp01(0.15 + s * 0.85 + sneakyBias)
   };
 }
 
@@ -597,4 +648,12 @@ function clamp01(x){
   if(x <= 0) return 0;
   if(x >= 1) return 1;
   return x;
+}
+
+// District bloc threshold: 1..HIGH_DISTRICT_MAX are considered "higher" districts.
+const HIGH_DISTRICT_MAX = 4;
+function isHighDistrict(d){
+  const n = Number(d);
+  if(!Number.isFinite(n)) return false;
+  return n >= 1 && n <= HIGH_DISTRICT_MAX;
 }
