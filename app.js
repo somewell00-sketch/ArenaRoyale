@@ -1602,7 +1602,7 @@ function renderGame(){
       return;
     }
     if(dead){
-      showLeftAlert("You died. Restart the game.");
+      showLeftAlert("☠️ You died. Restart the game.");
       // Show a dedicated game over dialog (e.g., if the area vanished).
       const a = world?.map?.areasById?.[String(p.areaId)];
       const reason = (a && a.isActive === false) ? "area_closed" : "death";
