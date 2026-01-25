@@ -579,7 +579,7 @@ function renderGame(){
           <div class="row" style="margin-top:12px; gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
-            <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" data-tooltip="Restore 5 FP by drinking water">Drink water</button>
+            <button id="btnDrink" class="btn teal hidden" style="flex:1; min-width:120px;" data-tooltip="Restore 10 FP by drinking water">Drink water</button>
             <button id="btnSetNet" class="btn purple hidden" style="flex:1; min-width:120px;" data-tooltip="Set a Net trap here (activates tomorrow)">Set Net</button>
             <button id="btnSetMine" class="btn orange hidden" style="flex:1; min-width:120px;" data-tooltip="Set a Mine trap here (activates tomorrow)">Set Mine</button>
             <button id="btnAttack" class="btn red hidden" style="flex:1; min-width:120px;">Attack</button>
@@ -1084,6 +1084,13 @@ function renderGame(){
 
     // Contextual actions for the current area
     const curArea = world.map.areasById[String(p.areaId)];
+    const npcsHere = Object.values(world.entities.npcs || {}).filter(n => (n.hp ?? 0) > 0 && n.areaId === p.areaId);
+    const canDefend = uiState.phase === "needs_action" && npcsHere.length > 0;
+    // UI-only: show Defend only when there is at least one NPC in the current area.
+    if(btnDefend){
+      if(canDefend) btnDefend.classList.remove("hidden");
+      else btnDefend.classList.add("hidden");
+    }
     const canDrink = uiState.phase === "needs_action" && !!curArea?.hasWater;
     if(btnDrink){
       if(canDrink) btnDrink.classList.remove("hidden");

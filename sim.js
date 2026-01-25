@@ -1298,7 +1298,8 @@ export function commitPlayerAction(world, action){
       return finalize();
     }
     const before = Number(player.fp ?? FP_MAX);
-    player.fp = Math.min(FP_MAX, before + 5);
+    // Water restores FP (buffed from 5 -> 10).
+    player.fp = Math.min(FP_MAX, before + 10);
     const gained = Math.max(0, player.fp - before);
     // Drinking counts as feeding for starvation rules
     player._today = player._today || {};
@@ -1715,7 +1716,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       const area = next.map.areasById[String(a.areaId)];
       if(area?.hasWater){
         const before = Number(a.fp ?? 0);
-        a.fp = Math.min(FP_MAX, before + 5);
+        a.fp = Math.min(FP_MAX, before + 10);
         a._today = a._today || {};
         a._today.fed = true;
         events.push({ type:"DRINK", who: a.id, areaId: a.areaId, fp: a.fp - before });
@@ -1895,10 +1896,10 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       const area = next.map.areasById[String(a.areaId)];
       if(area?.hasWater){
         const before = Number(a.fp ?? 0);
-        a.fp = Math.min(FP_MAX, before + 5);
+        a.fp = Math.min(FP_MAX, before + 10);
         a._today = a._today || {};
         a._today.fed = true;
-        events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:+5 });
+        events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:+10 });
       } else {
         events.push({ type:"DRINK", who:a.id, areaId:a.areaId, fp:0, reason:"no_water" });
       }
