@@ -504,7 +504,7 @@ function renderGame(){
         </div>
 
         <div class="section" style="margin-top:12px;">
-          <div class="muted">Inventory</div>
+          <div><strong>Inventory</strong></div>
           <div class="muted small" style="margin-top:6px;">Limit: <span id="invCount"></span> / ${INVENTORY_LIMIT}</div>
           <div id="invPills" class="pillWrap" style="margin-top:10px;"></div>
           <div class="muted small" style="margin-top:10px;">Click a weapon to equip it. Click a Shield to set it as defense. Click a consumable to use it.</div>
