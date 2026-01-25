@@ -12,16 +12,6 @@ export function generateNpcIntents(world){
   const seed = Number(world?.meta?.seed ?? 1);
   const playerDistrict = world?.entities?.player?.district ?? null;
 
-  // --- AI Phase (chaos ↔ strategy) ---
-  // CHAOS_EARLY: > 2/3 alive
-  // STRATEGIC:   <= 2/3 and > 1/3 alive
-  // CHAOS_LATE:  <= 1/3 alive
-  const debugPhase = computeAiPhase(world);
-  if(world && world.meta){
-    // Non-breaking: adds optional metadata used for debugging/exported logs.
-    world.meta.aiPhase = debugPhase;
-  }
-
   const npcs = Object.values(world?.entities?.npcs || {});
 
   for(const npc of npcs){
@@ -36,33 +26,15 @@ export function generateNpcIntents(world){
     const obs = buildObservedWorld(world, npc);
 
     // --- Posture/action intent ---
-    const actionIntent = decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, debugPhase });
+    const actionIntent = decidePosture(world, npc, obs, traits, { seed, day, playerDistrict });
     if(actionIntent) intents.push(actionIntent);
 
     // --- Movement intent ---
-    const moveIntent = decideMove(world, npc, obs, traits, { seed, day, debugPhase });
+    const moveIntent = decideMove(world, npc, obs, traits, { seed, day });
     if(moveIntent) intents.push(moveIntent);
   }
 
   return intents;
-}
-
-function computeAiPhase(world){
-  const total = Number(world?.meta?.totalPlayers ?? 0) || 0;
-  // Fallback: if total is missing, keep behavior stable.
-  if(total <= 0) return "STRATEGIC";
-
-  let alive = 0;
-  const p = world?.entities?.player;
-  if(p && (p.hp ?? 0) > 0) alive++;
-  for(const npc of Object.values(world?.entities?.npcs || {})){
-    if(npc && (npc.hp ?? 0) > 0) alive++;
-  }
-
-  const ratio = alive / total;
-  if(ratio > (2/3)) return "CHAOS_EARLY";
-  if(ratio > (1/3)) return "STRATEGIC";
-  return "CHAOS_LATE";
 }
 
 function buildObservedWorld(world, npc){
@@ -109,7 +81,7 @@ function buildObservedWorld(world, npc){
   return { area, hereActors, adjacent };
 }
 
-function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, debugPhase }){
+function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
   if((npc.trappedDays ?? 0) > 0) return { source: npc.id, type: "NOTHING", payload: { reason: "trapped" } };
 
   const area = obs.area;
@@ -123,13 +95,16 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, deb
   // the ground ends up cluttered with untouched items.
   const inCorn = Number(area?.id) === 1;
   if(inCorn && ground.length && invN < INVENTORY_LIMIT){
-    // Strong push to collect on day 1–3.
-    // After day 5, ease off so Cornucopia doesn't become a forever-loot vacuum.
-    const baseChance = (day <= 3) ? 0.92 : (day <= 5 ? 0.55 : 0.30);
+    // Cornucopia scramble: make early collection near-certain so loot doesn't sit forever.
+    // This also restores the old "try to pick items in the first two days" behavior.
+    let baseChance = 0.55;
+    if(day <= 2) baseChance = 0.98;
+    else if(day === 3) baseChance = 0.92;
     // If they have 0–1 items, they are still gearing up.
     const invBoost = (invN <= 1) ? 0.25 : 0;
     const rForce = hash01(seed, day, `corn_collect|${npc.id}|${invN}|${ground.length}`);
-    if(rForce < Math.min(0.98, baseChance + invBoost)){
+    // For day 1–2, if they have space, we force the attempt (no RNG gate).
+    if(day <= 2 || rForce < Math.min(0.98, baseChance + invBoost)){
     const scoredItems = [];
     for(let i=0;i<ground.length;i++){
       const inst = ground[i];
@@ -199,29 +174,6 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, deb
 let bestAttack = null;
   let bestAttackScore = -1e9;
 
-  // --- Phase knobs ---
-  const isChaosEarly = debugPhase === "CHAOS_EARLY";
-  const isStrategic = debugPhase === "STRATEGIC";
-  const isChaosLate = debugPhase === "CHAOS_LATE";
-  const isChaos = isChaosEarly || isChaosLate;
-
-  // Global: max kills for "threat focus" normalization.
-  const maxKills = Math.max(1,
-    Number(world?.entities?.player?.kills ?? 0),
-    ...Object.values(world?.entities?.npcs || {}).map(n => Number(n?.kills ?? 0))
-  );
-
-  // Coalition heuristic: if 3+ actors are in the same area, weaker ones are more likely to dogpile the strongest.
-  const areaActors = [npc, ...targets].filter(Boolean);
-  const canCoalition = areaActors.length >= 3;
-  const strongestIdInArea = canCoalition ? strongestActorId(areaActors) : null;
-  const selfIsStrongest = (strongestIdInArea != null) && (strongestIdInArea === npc.id);
-
-  // District bloc heuristic:
-  // - Higher-ranked districts (1..4) are more likely to play together.
-  // - They preferentially target outsiders, but will betray if an "ally" is weak or too threatening.
-  const npcIsHigh = isHighDistrict(npc.district);
-
   for(const t of targets){
     // District bias: less likely to attack same district and less likely to attack player's district.
     const sameDistrict = (t.district != null && npc.district != null && t.district === npc.district);
@@ -230,77 +182,12 @@ let bestAttack = null;
     const killChance = estimateKillChance(world, npc, t, { seed, day });
     const risk = estimateRisk(world, npc, t);
 
-    // Base: expected gain - expected pain.
-    // In CHAOS phases we weight aggression more and inject noise; in STRATEGIC we weight risk more.
-    const aggrW = isStrategic ? (0.85 + traits.aggression * 0.65) : (1.05 + traits.aggression * 0.85);
-    const riskW = isStrategic ? (0.85 + traits.caution * 1.00) : (0.45 + traits.caution * 0.65);
-
-    let score = killChance * aggrW - risk * riskW;
-
-    // Strong weapon makes them more willing to start fights.
-    if(hasStrongWeapon) score += isStrategic ? 0.40 : 0.65;
-
-    // District bias: keep it, but soften it so the player doesn't become a "never attack" target.
-    if(sameDistrict) score -= isChaos ? 0.18 : 0.35;
-    if(playerDistrictBias && t.id !== "player") score -= isChaos ? 0.05 : 0.12;
-
-    // Normalize kills once for both threat-focus and bloc betrayal rules.
-    const killFrac = clamp01(Number(t.kills ?? 0) / maxKills);
-
-    // District bloc behavior (soft preference, never absolute):
-    // High districts cooperate more, targeting outsiders... but betrayal is always on the table.
-    const targetIsHigh = isHighDistrict(t.district);
-    if(npcIsHigh){
-      // Prefer attacking outside the bloc.
-      const highVsHighPenalty = isStrategic ? 0.28 : (isChaosLate ? 0.18 : 0.12);
-      const highVsLowBonus = isStrategic ? 0.22 : (isChaosLate ? 0.18 : 0.10);
-      if(targetIsHigh){
-        score -= highVsHighPenalty;
-        // Betrayal triggers: if the ally is weak OR has become a big threat, reduce the penalty heavily.
-        const betray = isStrategic && (((t.hp ?? 100) <= 45) || (killFrac >= 0.55));
-        if(betray) score += highVsHighPenalty * 0.70; // undo most of the bloc penalty
-      } else {
-        score += highVsLowBonus;
-      }
-    } else {
-      // Lower districts are a bit more hesitant to pick fights with the bloc...
-      // ...but will join dogpiles against the strongest when they have numbers.
-      if(targetIsHigh){
-        score -= isStrategic ? 0.08 : 0.12;
-        if(canCoalition && !selfIsStrongest && strongestIdInArea && t.id === strongestIdInArea){
-          score += isStrategic ? 0.25 : 0.15;
-        }
-      }
-    }
-
-    // Cowardice: they still like finishing weak targets.
-    const hpFrac = clamp01((t.hp ?? 100) / 100);
-    const weakBonus = (1 - hpFrac) * (isStrategic ? 0.28 : 0.40);
-    score += weakBonus;
-    if((t.hp ?? 100) <= 35) score += isStrategic ? 0.20 : 0.32;
-
-    // Threat focus: higher kill count draws attention (especially in STRATEGIC and late-game CHAOS).
-    const killFocus = (isStrategic ? 0.55 : (isChaosLate ? 0.65 : 0.30));
-    score += killFrac * killFocus;
-
-    // Coalition: if 3+ in the area, non-strongest actors are more likely to attack the strongest.
-    if(canCoalition && !selfIsStrongest && strongestIdInArea && t.id === strongestIdInArea){
-      const selfThreat = combatThreatScore(npc);
-      const strongThreat = combatThreatScore(t);
-      const gap = clamp01((strongThreat - selfThreat) / Math.max(1, strongThreat));
-      const coalitionBase = isStrategic ? 0.55 : 0.35;
-      score += coalitionBase + gap * (isStrategic ? 0.35 : 0.55);
-    }
-
-    // CHAOS: inject randomness + more willingness to swing at strong targets.
-    if(isChaos){
-      const noise = (hash01(seed, day, `atk_noise|${npc.id}|${t.id}|${debugPhase}`) * 2 - 1);
-      score += noise * (isChaosEarly ? 0.22 : 0.30);
-      // Early chaos: sometimes go for the strongest just because.
-      if(isChaosEarly && canCoalition && t.id === strongestIdInArea){
-        score += 0.10;
-      }
-    }
+    let score = killChance * (0.9 + traits.aggression) - risk * (0.6 + traits.caution);
+    if(hasStrongWeapon) score += 0.55;
+    if(sameDistrict) score -= 0.55;
+    if(playerDistrictBias) score -= 0.20;
+    // Prefer weaker-looking targets.
+    score += clamp01((100 - (t.hp ?? 100)) / 100) * 0.35;
 
     if(score > bestAttackScore){
       bestAttackScore = score;
@@ -308,12 +195,8 @@ let bestAttack = null;
     }
   }
 
-  // Defensive posture shifts with phase.
-  const defendScore = (isStrategic ? 0.42 : 0.28)
-    + traits.caution * (isStrategic ? 0.55 : 0.35)
-    + fearFactor(npc) * (isStrategic ? 0.70 : 0.45)
-    + (traits.sneaky ?? 0) * (isStrategic ? 0.25 : 0.10);
-  const nothingScore = isChaos ? 0.05 : 0.15;
+  const defendScore = 0.35 + traits.caution * 0.45 + fearFactor(npc) * 0.6;
+  const nothingScore = 0.15;
 
   // If they have no visible targets, bias to defend.
   if(!targets.length){
@@ -331,7 +214,7 @@ let bestAttack = null;
     : { source: npc.id, type: "NOTHING", payload: {} };
 }
 
-function decideMove(world, npc, obs, traits, { seed, day, debugPhase }){
+function decideMove(world, npc, obs, traits, { seed, day }){
   if((npc.trappedDays ?? 0) > 0) return { source: npc.id, type: "STAY", payload: { reason: "trapped" } };
 
   const max = maxStepsForNpc(npc);
@@ -394,6 +277,14 @@ if(Number(start) === 1){
 }
 const adjustedStayScore = stayScore + stayBias;
 
+  // Early Cornucopia: don't leave before trying to gear up.
+  // If day 1–2 and there is loot available, stay unless inventory is already decent.
+  const herePre = world.map?.areasById?.[String(start)];
+  const herePreGround = Array.isArray(herePre?.groundItems) ? herePre.groundItems : [];
+  if(Number(start) === 1 && day <= 2 && herePreGround.length > 0 && invCount < 2){
+    return { source: npc.id, type: "STAY", payload: { reason: "corn_gearing" } };
+  }
+
 
   // Inertia: don't move unless it is noticeably better.
   // NOTE: We also add an explicit "leave empty areas" rule so NPCs don't freeze when there's
@@ -402,22 +293,41 @@ const adjustedStayScore = stayScore + stayBias;
   const hereGround = Array.isArray(here?.groundItems) ? here.groundItems : [];
   const emptyHere = hereGround.length === 0;
 
+  // Early-game Cornucopia: keep NPCs from wandering off before they have a chance to gear up.
+  // This relies on the posture logic forcing collect attempts day 1–2.
+  if(Number(start) === 1 && day <= 2 && invCount < 2 && hereGround.length > 0){
+    return { source: npc.id, type: "STAY", payload: { reason: "corn_scramble" } };
+  }
+
   // If the current area is empty, strongly encourage moving.
   // Cornucopia: don't force early dispersal too fast or most loot will never be contested.
   // Start forcing dispersal only after getting at least 2 items, and only when the pile is small.
   const cornLootLow = (Number(start) === 1) && (hereGround.length <= 6);
-  const forceMove = emptyHere || (Number(start) === 1 && invCount >= 2 && cornLootLow);
+  // Post day-2 Cornucopia dispersal: once they've grabbed at least something, start pushing them outward
+  // even if there is still loot left, so the match doesn't stagnate.
+  let crowdHere = 0;
+  const p = world?.entities?.player;
+  if(p && (p.hp ?? 0) > 0 && Number(p.areaId) === Number(start) && !(p._today?.invisible)) crowdHere++;
+  for(const other of Object.values(world?.entities?.npcs || {})){
+    if(!other || (other.hp ?? 0) <= 0) continue;
+    if(Number(other.areaId) !== Number(start)) continue;
+    if(other._today?.invisible) continue;
+    crowdHere++;
+  }
 
-  const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
+  const cornShouldDisperse = (Number(start) === 1 && day > 2 && invCount >= 1 && (hereGround.length <= 10 || crowdHere >= 5));
+  const forceMove = emptyHere || (Number(start) === 1 && invCount >= 2 && cornLootLow) || cornShouldDisperse;
+
+  let moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
+  // After day 2 in the Cornucopia, lower the bar to move so they actually spread through the map.
+  if(Number(start) === 1 && day > 2) moveThreshold -= 0.08;
   const canMove = forceMove || scored.some(s => !s.isStay && (s.score - adjustedStayScore) >= moveThreshold);
   if(!canMove) return { source: npc.id, type: "STAY", payload: {} };
 
   // Deterministic weighted choice among the top few candidates.
   // More cautious NPCs behave more deterministically (lower temperature).
-  // CHAOS phases are more erratic (higher temperature).
-  const isChaos = (debugPhase === "CHAOS_EARLY" || debugPhase === "CHAOS_LATE");
-  const temperatureBase = (isChaos ? 0.68 : 0.55);
-  const temperature = temperatureBase - traits.caution * (isChaos ? 0.22 : 0.30); // ~0.30..0.68
+  // Slightly higher randomness outside the strategic mid-game to avoid NPC "traffic jams".
+  const temperature = 0.60 - traits.caution * 0.30; // ~0.30..0.60
   const pool = scored.filter(s => !s.isStay).slice(0, 6);
   const pickR = hash01(seed, day, `move_pick|${npc.id}`);
   const chosen = weightedPick(pool, pickR, temperature) || pool[0];
@@ -453,8 +363,7 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     if(other._today?.invisible) continue;
     crowd++;
   }
-  let crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03 + (traits.sneaky ?? 0) * 0.04)
-    + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
+  let crowdPenalty = Math.max(0, (crowd - 1)) * (0.04 + traits.caution * 0.03) + ((Number(areaId) === 1 && day >= 2) ? 0.10 : 0);
   // Early Cornucopia: allow crowding so more NPCs contest loot.
   if(Number(areaId) === 1 && day === 1) crowdPenalty *= 0.2;
 
@@ -542,38 +451,6 @@ function estimateRisk(world, attacker, target){
   return clamp01(crowd * 0.55 + hpRisk * 0.35 + fpRisk * 0.25);
 }
 
-function combatThreatScore(actor){
-  if(!actor) return 0;
-  const hp = Number(actor.hp ?? 0);
-  const fp = Number(actor.fp ?? 0);
-  const kills = Number(actor.kills ?? 0);
-  const attrs = actor.attrs || {};
-  const F = Number(attrs.F ?? 0);
-  const D = Number(attrs.D ?? 0);
-  const P = Number(attrs.P ?? 0);
-
-  const w = strongestWeaponInInventory(actor.inventory);
-  let dmg = 0;
-  if(w?.def){
-    const qty = Number(w.inst?.qty || 1);
-    dmg = w.def.stackable ? Number(w.def.damage ?? 0) * qty : Number(w.def.damage ?? 0);
-  }
-
-  // Tuned to feel right, not to be "true" combat math.
-  return hp * 0.55 + fp * 0.12 + dmg * 1.05 + kills * 18 + (F + D + P) * 4;
-}
-
-function strongestActorId(actors){
-  let bestId = null;
-  let best = -1e9;
-  for(const a of (actors || [])){
-    if(!a || (a.hp ?? 0) <= 0) continue;
-    const s = combatThreatScore(a);
-    if(s > best){ best = s; bestId = a.id; }
-  }
-  return bestId;
-}
-
 function fearFactor(npc){
   const hp = npc.hp ?? 100;
   const fp = npc.fp ?? 70;
@@ -610,24 +487,10 @@ function makeTraits(seed, id, district){
   const a = hash01(seed, 0, `trait_aggr|${id}|${district}`);
   const g = hash01(seed, 0, `trait_greed|${id}|${district}`);
   const c = hash01(seed, 0, `trait_caut|${id}|${district}`);
-
-  // District style bias:
-  // - District 1 tends to be more aggressive.
-  // - District 12 tends to be more cautious/sneaky.
-  const d = Math.max(1, Math.min(12, Number(district) || 12));
-  const t = (d - 1) / 11; // 0 at D1, 1 at D12
-  const aggrBias = (1 - t) * 0.35;
-  const cautBias = t * 0.35;
-  const sneakyBias = t * 0.40;
-
-  const s = hash01(seed, 0, `trait_sneaky|${id}|${district}`);
-
   return {
-    aggression: clamp01(0.25 + a * 0.75 + aggrBias),
-    greed: clamp01(0.15 + g * 0.85),
-    caution: clamp01(0.20 + c * 0.80 + cautBias),
-    // Sneaky affects: willingness to avoid crowded areas and preference for low-risk finishes.
-    sneaky: clamp01(0.15 + s * 0.85 + sneakyBias)
+    aggression: 0.25 + a * 0.75,
+    greed: 0.15 + g * 0.85,
+    caution: 0.20 + c * 0.80
   };
 }
 
@@ -648,12 +511,4 @@ function clamp01(x){
   if(x <= 0) return 0;
   if(x >= 1) return 1;
   return x;
-}
-
-// District bloc threshold: 1..HIGH_DISTRICT_MAX are considered "higher" districts.
-const HIGH_DISTRICT_MAX = 4;
-function isHighDistrict(d){
-  const n = Number(d);
-  if(!Number.isFinite(n)) return false;
-  return n >= 1 && n <= HIGH_DISTRICT_MAX;
 }
