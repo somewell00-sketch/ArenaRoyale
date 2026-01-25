@@ -567,10 +567,13 @@ function makeTraits(seed, id, district){
   const a = hash01(seed, 0, `trait_aggr|${id}|${district}`);
   const g = hash01(seed, 0, `trait_greed|${id}|${district}`);
   const c = hash01(seed, 0, `trait_caut|${id}|${district}`);
+  const p = hash01(seed, 0, `trait_pack|${id}|${district}`);
   return {
     aggression: 0.25 + a * 0.75,
     greed: 0.15 + g * 0.85,
-    caution: 0.20 + c * 0.80
+    caution: 0.20 + c * 0.80,
+    // Loot style: higher = prefers utility/backpacks/safer pickups.
+    packrat: 0.10 + p * 0.90
   };
 }
 

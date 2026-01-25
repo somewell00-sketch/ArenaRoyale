@@ -146,13 +146,35 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
         for(let i=0;i<ground.length;i++){
           const inst = ground[i];
           const def = getItemDef(inst?.defId);
-          let v = itemValue(def, inst);
+          let v0 = itemValue(def, inst);
+          let v = v0;
 
-          // Prefer weapons early, but don't force everyone onto the same single weapon.
-          if(def?.type === ItemTypes.WEAPON) v *= 1.8;
+          // Personality-driven preferences in the Cornucopia:
+          // - greed => chase stronger weapons more
+          // - caution => avoid the single best item (likely contested), accept median value
+          // - packrat => value backpacks/utility more
+          const isWeapon = def?.type === ItemTypes.WEAPON;
+          const isBackpack = (def?.id === "backpack" || def?.id === "first_aid_backpack");
+
+          if(isWeapon){
+            // Exponent > 1 makes values more 'peaky' (harder preference for top weapons).
+            // Exponent < 1 flattens the field (more willing to take medium weapons).
+            const exp = 0.85 + (1 - traits.caution) * 0.75 - traits.caution * 0.10;
+            v = Math.pow(Math.max(0.001, v0), exp);
+            v *= (1.25 + traits.greed * 0.95);
+          } else {
+            v *= 0.95 + traits.packrat * 0.20;
+          }
+
+          if(isBackpack){
+            // Some NPCs will prioritize backpacks over raw weapon power.
+            v *= 1.10 + traits.packrat * 2.20 + traits.caution * 0.25;
+          }
 
           // If the NPC still has no weapon, slightly deprioritize non-weapons.
-          if(!npc.memory.cornHasWeapon && def?.type !== ItemTypes.WEAPON) v *= 0.85;
+          if(!npc.memory.cornHasWeapon && !isWeapon) v *= 0.80;
+          // If they have no weapon and are bold, bump weapons a bit.
+          if(!npc.memory.cornHasWeapon && isWeapon) v *= 1.10 + (1 - traits.caution) * 0.20;
 
           // Add a tiny NPC-specific jitter so ties don't collapse to the same index.
           v += hash01(seed, day, `corn_item_jitter|${npc.id}|${i}`) * 0.02;
@@ -160,7 +182,10 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict }){
           opts.push({ idx: i, score: v });
         }
 
-        const pick = weightedPick(opts, hash01(seed, day, `corn_pick|${npc.id}`), 0.35) || opts[0];
+        // Personality affects how sharply they chase top loot.
+        // Cautious NPCs spread out more (avoid heavy contests), bold NPCs focus the best.
+        const cornTemp = 0.22 + traits.caution * 0.55 - traits.greed * 0.10;
+        const pick = weightedPick(opts, hash01(seed, day, `corn_pick|${npc.id}`), cornTemp) || opts[0];
         return { source: npc.id, type: "COLLECT", payload: { itemIndex: pick.idx } };
       }
     }
@@ -611,10 +636,13 @@ function makeTraits(seed, id, district){
   const a = hash01(seed, 0, `trait_aggr|${id}|${district}`);
   const g = hash01(seed, 0, `trait_greed|${id}|${district}`);
   const c = hash01(seed, 0, `trait_caut|${id}|${district}`);
+  const p = hash01(seed, 0, `trait_pack|${id}|${district}`);
   return {
     aggression: 0.25 + a * 0.75,
     greed: 0.15 + g * 0.85,
-    caution: 0.20 + c * 0.80
+    caution: 0.20 + c * 0.80,
+    // Loot style: higher = prefers utility/backpacks/safer pickups.
+    packrat: 0.10 + p * 0.90
   };
 }
 
