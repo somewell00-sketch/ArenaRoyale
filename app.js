@@ -1552,6 +1552,11 @@ function renderGame(){
     const out = [];
     for(const e of (events || [])){
       switch(e.type){
+        case "AREA_FLAVOR": {
+          const lines = Array.isArray(e.lines) ? e.lines : [];
+          for(const ln of lines) if(ln) out.push(String(ln));
+          break;
+        }
         case "USE_ITEM": {
           if(e.ok){
             const def = getItemDef(e.itemDefId);
@@ -1629,11 +1634,7 @@ function renderGame(){
           break;
         }
         case "MINE_BLAST": {
-          if(e.injured?.length){
-            out.push(`A mine exploded somewhere in the arena. Injured: ${e.injured.map(npcName).join(", ")}.`);
-          } else {
-            out.push("A mine exploded somewhere in the arena.");
-          }
+          out.push("An explosion echoes in the distance.");
           break;
         }
         case "CREATURE_ATTACK": {

@@ -168,6 +168,106 @@ const ARENA_NAME_BY_BIOME = {
 const REGULAR_ARENA_NAME = "Survival Arena";
 const THEMATIC_ARENA_CHANCE = 0.20;
 
+// --- Area personality tags (hidden from UI) ---
+// Tags influence flavor text, light passive effects, and AI weights.
+export const AREA_TAGS = [
+  "exposed",
+  "sheltered",
+  "rich_loot",
+  "quiet",
+  "hazard"
+];
+
+const SECOND_TAG_CHANCE = 0.20;
+
+const HAZARD_TYPES = ["heat","cold","toxic","unstable_ground","flooded"];
+
+const WORLD_EVENT_TYPES = ["storm","fog","fire","scarcity"];
+
+function areaTagWeightsForBiome(biome){
+  // Weights are intentionally soft: they only shape the "feel" of places.
+  // Cornucopia is handled elsewhere.
+  switch(String(biome || "")){
+    case "desert":
+    case "caatinga":
+    case "savanna":
+    case "plains":
+      return { exposed: 1.0, sheltered: 0.35, rich_loot: 0.45, quiet: 0.25, hazard: 0.60 };
+    case "glacier":
+    case "tundra":
+      return { exposed: 0.85, sheltered: 0.30, rich_loot: 0.35, quiet: 0.55, hazard: 0.70 };
+    case "mountain":
+      return { exposed: 0.60, sheltered: 0.55, rich_loot: 0.45, quiet: 0.30, hazard: 0.60 };
+    case "woods":
+    case "forest":
+    case "jungle":
+      return { exposed: 0.30, sheltered: 0.95, rich_loot: 0.60, quiet: 0.55, hazard: 0.35 };
+    case "swamp":
+    case "lake":
+      return { exposed: 0.35, sheltered: 0.55, rich_loot: 0.35, quiet: 0.80, hazard: 0.55 };
+    case "industrial":
+      return { exposed: 0.45, sheltered: 0.55, rich_loot: 0.80, quiet: 0.20, hazard: 0.60 };
+    case "fairy":
+      return { exposed: 0.35, sheltered: 0.55, rich_loot: 0.55, quiet: 0.65, hazard: 0.25 };
+    default:
+      return { exposed: 0.55, sheltered: 0.55, rich_loot: 0.45, quiet: 0.40, hazard: 0.40 };
+  }
+}
+
+function pickAreaTags({ biome, rng }){
+  const w = areaTagWeightsForBiome(biome);
+  const first = weightedPick([
+    ["exposed", w.exposed],
+    ["sheltered", w.sheltered],
+    ["rich_loot", w.rich_loot],
+    ["quiet", w.quiet],
+    ["hazard", w.hazard]
+  ], rng);
+
+  const tags = [first];
+
+  // Optional second tag, with light coherence rules.
+  if(rng.next() < SECOND_TAG_CHANCE){
+    const forbid = new Set([first]);
+    // Coherence: "quiet" rarely mixes with "rich_loot".
+    if(first === "quiet") forbid.add("rich_loot");
+    if(first === "rich_loot") forbid.add("quiet");
+
+    const w2 = { ...w };
+    for(const k of forbid) w2[k] = 0;
+    const second = weightedPick([
+      ["exposed", w2.exposed],
+      ["sheltered", w2.sheltered],
+      ["rich_loot", w2.rich_loot],
+      ["quiet", w2.quiet],
+      ["hazard", w2.hazard]
+    ], rng);
+    if(second && !forbid.has(second)) tags.push(second);
+  }
+
+  return tags;
+}
+
+function pickHazardForBiome(biome, rng){
+  const b = String(biome || "");
+  if(b === "desert" || b === "caatinga" || b === "savanna") return { type: "heat", severity: 1 };
+  if(b === "glacier" || b === "tundra") return { type: "cold", severity: 1 };
+  if(b === "swamp" || b === "lake") return { type: "flooded", severity: 1 };
+  if(b === "industrial") return { type: (rng.next() < 0.65 ? "toxic" : "unstable_ground"), severity: 1 };
+  if(b === "mountain") return { type: "unstable_ground", severity: 1 };
+  // Default fallback
+  return { type: HAZARD_TYPES[Math.floor(rng.next()*HAZARD_TYPES.length)], severity: 1 };
+}
+
+function rollWorldEvent(rng){
+  const type = WORLD_EVENT_TYPES[Math.floor(rng.next() * WORLD_EVENT_TYPES.length)];
+  // Keep it gentle: short window, later start.
+  const startDay = 2 + Math.floor(rng.next() * 4); // 2..5
+  const duration = 2 + Math.floor(rng.next() * 2); // 2..3
+  const endDay = startDay + duration;
+  return { type, startDay, endDay };
+}
+
 function weightedPick(items, rng){
   // items: Array<[key, weight]>
   let sum = 0;
@@ -584,6 +684,25 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     if(c._riverTouched) riverCellIds.add(c.id);
   }
 
+  // --- World event (soft, global ambience) ---
+  // One per match; effects are intentionally mild.
+  const worldEvent = rollWorldEvent(rng);
+
+  // --- Assign hidden personality tags + hazards ---
+  for(const c of cells){
+    const biome = (c.id === 1) ? "Cornucopia" : c.biome;
+    const tags = (c.id === 1)
+      ? ["rich_loot", "exposed"]
+      : pickAreaTags({ biome, rng });
+    c.tags = tags;
+    c.historyTags = [];
+    if(tags.includes("hazard") && c.id !== 1){
+      c.hazard = pickHazardForBiome(c.biome, rng);
+    } else {
+      c.hazard = null;
+    }
+  }
+
   // build serializable structures
   const areasById = {};
   const adjById = {};
@@ -595,7 +714,12 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
       hasWater: !!c.hasWater,
       // v0: allow traversal across water by treating all water areas as having a bridge.
       // Keeps the "bridge" mechanic for later without restricting movement now.
-      hasBridge: !!c.hasWater
+      hasBridge: !!c.hasWater,
+
+      // Hidden personality / ambience (used by sim + AI).
+      tags: Array.isArray(c.tags) ? c.tags.slice(0, 2) : [],
+      historyTags: Array.isArray(c.historyTags) ? c.historyTags : [],
+      hazard: c.hazard || null
     };
     adjById[String(c.id)] = Array.from(adj.get(c.id) || []).sort((a,b)=>a-b);
   }
@@ -612,7 +736,7 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
     river: { points: river.points, cellIds: Array.from(riverCellIds) }
   };
 
-  return { areasById, adjById, uiGeom, arenaName };
+  return { areasById, adjById, uiGeom, arenaName, worldEvent };
 }
 
 function buildRiver({ rng, cells, adj, width, height, blobRadius }){

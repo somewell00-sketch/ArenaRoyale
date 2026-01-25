@@ -476,8 +476,32 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   const groundCount = Array.isArray(a.groundItems) ? a.groundItems.length : 0;
   const creatures = (a.activeElements || []).filter(e => e?.kind === "creature").length;
 
+  // Hidden area personality (only trusted if the NPC has been there before, or it is their current area).
+  const canReadAreaFeel = known || Number(areaId) === Number(npc.areaId);
+  const tags = canReadAreaFeel && Array.isArray(a.tags) ? a.tags : [];
+  const history = canReadAreaFeel && Array.isArray(a.historyTags) ? a.historyTags : [];
+  const hasHist = (tag) => history.some(h => h && h.tag === tag && Number(h.expiresDay || 0) >= Number(day));
+
   const lootValue = known ? (groundCount * 0.35) : 0.10;
   const foodValue = (a.hasFood ? 0.45 : 0) + (a.hasWater ? 0.18 : 0);
+
+  // Personality-based interpretation of tags.
+  let tagBonus = 0;
+  if(tags.includes("rich_loot")) tagBonus += 0.18 + traits.greed * 0.22 - traits.caution * 0.05;
+  if(tags.includes("quiet")) tagBonus += (hpP < 0.55 ? (0.14 + traits.caution * 0.12) : (-0.03 + traits.caution * 0.04)) - (offensive && hpP >= 0.75 ? 0.08 : 0);
+  if(tags.includes("sheltered")) tagBonus += (hpP < 0.65 ? (0.10 + traits.caution * 0.10) : (0.03 + traits.caution * 0.03));
+  if(tags.includes("exposed")) tagBonus -= (hpP < 0.55 ? (0.10 + traits.caution * 0.12) : (0.03 + traits.caution * 0.05));
+  if(tags.includes("hazard")) tagBonus -= (0.16 + traits.caution * 0.28) + (hpP < 0.45 ? 0.10 : 0);
+  // Light hazard awareness even without the hazard tag (older saves).
+  if(canReadAreaFeel && a.hazard && a.hazard.type) tagBonus -= (0.10 + traits.caution * 0.18);
+
+  // Hot-zone memory.
+  let historyBonus = 0;
+  if(hasHist("recent_death")) historyBonus += (offensive ? 0.03 : -0.05) - (traits.caution * 0.22) - (hpP < 0.50 ? 0.10 : 0);
+  if(hasHist("recent_fight")) historyBonus += (offensive ? (0.10 + (1 - traits.caution) * 0.18) : (-0.08 - traits.caution * 0.04));
+  if(hasHist("trap_suspected")) historyBonus -= (0.10 + traits.caution * 0.18);
+  if(hasHist("explosive_noise")) historyBonus -= (0.06 + traits.caution * 0.12);
+  if(hasHist("high_risk")) historyBonus -= (0.08 + traits.caution * 0.22) + (hpP < 0.55 ? 0.06 : 0);
 
   // Exploration bonus: unknown areas can be attractive, but only for less cautious NPCs.
   const explore = (!known && Number(areaId) !== Number(npc.areaId)) ? (0.18 + traits.greed * 0.18 - traits.caution * 0.12) : 0;
@@ -538,7 +562,9 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
     explore -
     recentPenalty +
     noiseBonus +
-    populationBonus;
+    populationBonus +
+    tagBonus +
+    historyBonus;
 
   // tiny deterministic jitter to break ties.
   return score + (hash01(seed, day, `area_jitter|${npc.id}|${areaId}`) * 0.01);

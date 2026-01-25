@@ -47,6 +47,93 @@ const NOISE = {
   HIGHLY: "highly_noisy"
 };
 
+// --- Area flavor / ambience ---
+// Hidden tags and historyTags feed short narrative cues.
+export function getAreaFlavorText(area, context = {}){
+  if(!area) return null;
+  const tags = Array.isArray(area.tags) ? area.tags : [];
+  const history = Array.isArray(area.historyTags) ? area.historyTags : [];
+  const hazard = area.hazard || null;
+  const wEv = context.world?.map?.worldEvent || null;
+  const day = Number(context.day ?? context.world?.meta?.day ?? 1);
+
+  const out = [];
+
+  // World event framing (kept vague; no numbers).
+  if(wEv && day >= Number(wEv.startDay) && day <= Number(wEv.endDay)){
+    switch(String(wEv.type)){
+      case "storm": out.push("Dark clouds gather over the arena."); break;
+      case "fog": out.push("A thick fog blurs the edges of the world."); break;
+      case "fire": out.push("The air carries the scent of smoke."); break;
+      case "scarcity": out.push("Supplies feel strangely scarce today."); break;
+      default: break;
+    }
+  }
+
+  // Tag-based cues.
+  if(tags.includes("exposed")) out.push("You feel exposed here.");
+  if(tags.includes("sheltered")) out.push("This area offers some cover.");
+  if(tags.includes("quiet")) out.push("The area feels strangely calm.");
+  if(tags.includes("rich_loot")) out.push("Signs of scavenging are everywhere.");
+  if(tags.includes("hazard")) out.push("The environment feels hostile.");
+
+  // History cues (recent, vague).
+  const has = (t) => history.some(h => h && h.tag === t && Number(h.expiresDay || 0) >= day);
+  if(has("recent_death")) out.push("Something ended here not long ago.");
+  if(has("recent_fight")) out.push("The ground is marked by struggle.");
+  if(has("trap_suspected")) out.push("You sense something waiting to snap.");
+  if(has("explosive_noise")) out.push("Scorched debris lingers in the air.");
+  if(has("high_risk")) out.push("The place feels heavy with attention.");
+
+  // Hazard-specific cue (used on enter and day start).
+  if(hazard && hazard.type){
+    switch(String(hazard.type)){
+      case "heat": out.push("The heat drains your strength."); break;
+      case "cold": out.push("Cold bites through your gear."); break;
+      case "toxic": out.push("A sharp chemical smell stings your lungs."); break;
+      case "unstable_ground": out.push("The ground here is treacherous."); break;
+      case "flooded": out.push("Water tugs at your footing."); break;
+      default: break;
+    }
+  }
+
+  // Keep it short.
+  const unique = [];
+  for(const s of out){
+    if(!s) continue;
+    if(unique.includes(s)) continue;
+    unique.push(s);
+    if(unique.length >= 2) break;
+  }
+  return unique.length ? unique : null;
+}
+
+function ensureAreaHistory(area){
+  if(!area) return [];
+  if(!Array.isArray(area.historyTags)) area.historyTags = [];
+  return area.historyTags;
+}
+
+function addAreaHistoryTag(world, areaId, tag, expiresDay){
+  const a = world?.map?.areasById?.[String(areaId)];
+  if(!a) return;
+  const hist = ensureAreaHistory(a);
+  const existing = hist.find(h => h && h.tag === tag);
+  if(existing){
+    existing.expiresDay = Math.max(Number(existing.expiresDay || 0), Number(expiresDay || 0));
+  } else {
+    hist.push({ tag, expiresDay: Number(expiresDay || 0) });
+  }
+}
+
+function pruneExpiredAreaHistory(world, day){
+  for(const a of Object.values(world?.map?.areasById || {})){
+    if(!a) continue;
+    if(!Array.isArray(a.historyTags)) a.historyTags = [];
+    a.historyTags = a.historyTags.filter(h => h && Number(h.expiresDay || 0) >= Number(day));
+  }
+}
+
 function livingEntities(world){
   const all = [world?.entities?.player, ...Object.values(world?.entities?.npcs || {})];
   return all.filter(e => e && (e.hp ?? 0) > 0);
@@ -123,6 +210,42 @@ function applyHighlyNoisyHostileEvents(world, events, { seed, day }){
     applyDamage(target, dmg);
     events.push({ type:"HOSTILE_EVENT", who: target.id, areaId: area.id, dmg, note:"highly_noisy", phase:"endDay" });
     if((target.hp ?? 0) <= 0) events.push({ type:"DEATH", who: target.id, areaId: area.id, reason:"hostile_event" });
+  }
+}
+
+function applyAmbientHazards(world, events, { day }){
+  // End-of-day, gentle pressure. Never kills outright.
+  for(const e of [world?.entities?.player, ...Object.values(world?.entities?.npcs || {})]){
+    if(!e || (e.hp ?? 0) <= 0) continue;
+    const area = world?.map?.areasById?.[String(e.areaId)];
+    const hz = area?.hazard;
+    if(!hz || !hz.type) continue;
+
+    let text = null;
+    const t = String(hz.type);
+    if(t === "heat"){
+      spendFp(e, 3);
+      text = "The heat drains your strength.";
+    } else if(t === "cold"){
+      spendFp(e, 2);
+      text = "Cold bites through your gear.";
+    } else if(t === "flooded"){
+      spendFp(e, 2);
+      text = "Water tugs at your footing.";
+    } else if(t === "toxic"){
+      const before = Number(e.hp ?? 0);
+      applyDamage(e, 2);
+      if((e.hp ?? 0) <= 0) e.hp = Math.max(1, before);
+      text = "A sharp chemical smell stings your lungs.";
+    } else if(t === "unstable_ground"){
+      const before = Number(e.hp ?? 0);
+      applyDamage(e, 1);
+      if((e.hp ?? 0) <= 0) e.hp = Math.max(1, before);
+      text = "The ground here is treacherous.";
+    }
+
+    events.push({ type:"HAZARD_TICK", who: e.id, areaId: e.areaId, hazardType: t });
+    if(e.id === "player" && text) events.push({ type:"AREA_FLAVOR", areaId: e.areaId, lines: [text] });
   }
 }
 
@@ -437,6 +560,7 @@ function applyTrapsOnEnter(world, area, entrant, events, { day }){
     const spotted = P >= 10;
 
     if(t.kind === "net"){
+      addAreaHistoryTag(world, area.id, "trap_suspected", day + 2);
       if(entrant?._meta?.preventTrapOnce){
         entrant._meta.preventTrapOnce = false;
         events.push({ type:"NET_TRIGGER", areaId: area.id, caught: [], spared: [entrant.id] });
@@ -454,6 +578,8 @@ function applyTrapsOnEnter(world, area, entrant, events, { day }){
     }
 
     if(t.kind === "mine"){
+      addAreaHistoryTag(world, area.id, "trap_suspected", day + 2);
+      addAreaHistoryTag(world, area.id, "explosive_noise", day + 2);
       if(spotted){
         events.push({ type:"MINE_BLAST", injured: [], dead: [] });
         continue;
@@ -463,6 +589,7 @@ function applyTrapsOnEnter(world, area, entrant, events, { day }){
       if((entrant.hp ?? 0) <= 0){
         dropAllItemsToGround(entrant, area);
         events.push({ type:"DEATH", who: entrant.id, areaId: area.id, reason:"mine" });
+        addAreaHistoryTag(world, area.id, "recent_death", day + 2);
         events.push({ type:"MINE_BLAST", injured: [entrant.id], dead: [entrant.id] });
       } else {
         events.push({ type:"MINE_BLAST", injured: [entrant.id], dead: [] });
@@ -1473,6 +1600,12 @@ export function moveActorOneStep(world, who, toAreaId){
   // Creatures present in the area immediately attack anyone who enters.
   applyCreatureAttackOnEnter(world, area, entity, events, { seed: world.meta.seed, day: world.meta.day });
 
+  // Hidden ambience cues (player-only). Narrative only, no mechanics exposed.
+  if(who === "player"){
+    const lines = getAreaFlavorText(area, { world, day: world.meta.day, when: "enter" });
+    if(lines && lines.length) events.push({ type: "AREA_FLAVOR", areaId: to, lines });
+  }
+
 
   if(who === "player"){
     const v = new Set(world.flags.visitedAreas || []);
@@ -1665,6 +1798,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     applyDamage(target, dmg);
     events.push({ type:"ATTACK", who: attackerId, target: targetId, dmg, weaponDefId, areaId: attacker.areaId });
 
+    // Hot-zone memory.
+    addAreaHistoryTag(next, attacker.areaId, "recent_fight", day + 2);
+
     if(weaponDefId){
       const wDef = getItemDef(weaponDefId);
       if(wDef) applyGrenadeExtras(next, attacker, target, wDef, events);
@@ -1685,6 +1821,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
 
     if((target.hp ?? 0) <= 0){
       events.push({ type:"DEATH", who: targetId, areaId: attacker.areaId, reason:"combat" });
+      addAreaHistoryTag(next, attacker.areaId, "recent_death", day + 2);
       next.flags.killsThisDay = Array.isArray(next.flags.killsThisDay) ? next.flags.killsThisDay : [];
       next.flags.killsThisDay.push({ deadId: targetId, areaId: attacker.areaId, participants: [attackerId] });
       attacker.kills = Number(attacker.kills || 0) + 1;
@@ -1982,6 +2119,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   // Daily threats: only threatening areas roll when they contain players.
   applyDailyThreats(next, events, { seed: seed, day: next.meta.day });
 
+  // Environmental hazards (gentle, persistent pressure).
+  applyAmbientHazards(next, events, { day });
+
 
   // --- 6.2 Spoils after a kill ---
   // Loot is distributed among participants (who dealt damage / were in the dispute)
@@ -2024,6 +2164,15 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   next.meta.day += 1;
   applyClosuresForDay(next, next.meta.day);
 
+  // Map memory: prune expired hot-zone tags as the new day begins.
+  pruneExpiredAreaHistory(next, next.meta.day);
+
+  // Cornucopia becomes mythic after Day 1: a place people avoid returning to.
+  if(next.meta.day === 2){
+    addAreaHistoryTag(next, 1, "recent_death", next.meta.day + 9999);
+    addAreaHistoryTag(next, 1, "high_risk", next.meta.day + 9999);
+  }
+
   // Decrement Net trap imprisonment counters as the new day begins.
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if((e.hp ?? 0) <= 0) continue;
@@ -2050,6 +2199,12 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
 
   const a = next.map.areasById[String(e.areaId)];
   const noise = a?.noiseState || NOISE.QUIET;
+
+  // Player-only: if you stayed in place, reinforce the area's feel at day start.
+  if(e.id === "player" && a && !e.__movedToday){
+    const lines = getAreaFlavorText(a, { world: next, day: next.meta.day, when: "startDay" });
+    if(lines && lines.length) events.push({ type: "AREA_FLAVOR", areaId: a.id, lines });
+  }
   // Noisy areas have reduced foraging efficiency.
   // (When noisy: 25% of the time food fails to sustain you.)
   let hasFood = !!a?.hasFood;

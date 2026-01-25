@@ -674,6 +674,11 @@ for (let i = 1; i <= npcCount; i++){
     a1.biome = "Cornucopia";
   }
 
+  // Backwards-compatible state fields for the new map ambience system.
+  // (No logic here: just ensure fields exist.)
+  if(!world.map) world.map = { areasById: {}, adjById: {}, uiGeom: null, arenaName: "Survival Arena" };
+  if(!world.map.worldEvent) world.map.worldEvent = null;
+
   // --- Food availability (FP system) ---
   // Cornucopia always refills FP at day start.
   // Other areas do NOT auto-refill FP; food there is a finite ground item.
@@ -681,6 +686,11 @@ for (let i = 1; i <= npcCount; i++){
     if(!a) continue;
     a.hasFood = (Number(a.id) === 1);
     a.noiseState = "quiet";
+
+    // Hidden personality tags + hot-zone memory.
+    if(!Array.isArray(a.tags)) a.tags = [];
+    if(!Array.isArray(a.historyTags)) a.historyTags = [];
+    if(!a.hazard) a.hazard = null;
   }
 
   // Initialize ground items for all areas
