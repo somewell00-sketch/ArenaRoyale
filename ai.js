@@ -366,65 +366,25 @@ function decideMove(world, npc, obs, traits, { seed, day }){
   const bestScore = scored[0]?.score ?? stayScore;
 
 
-// Dispersal rule (Cornucopia + general):
-// 0 items -> tends to stay and fight for loot
-// 1 item  -> starts considering leaving
-// 2+ items -> strongly prefers leaving
+// Movement bias:
+// - If the current area has no loot, strongly encourage moving.
+// - Outside of that, don't move unless a destination is noticeably better.
 const invCount = invCountNow;
 let stayBias = 0;
-if(Number(start) === 1){
-  // After grabbing *anything* from the Cornucopia, NPCs should disperse quickly.
-  // This keeps Day 1 dynamic and prevents permanent Cornucopia camping.
-  if(invCount === 0 && !grabbedCornToday) stayBias = +0.10;
-  else if(invCount === 0 && grabbedCornToday) stayBias = -0.75;
-  else if(invCount === 1) stayBias = -0.85;
-  else stayBias = -1.05;
-} else {
-  if(invCount >= 2) stayBias = -0.12;
-}
+if(invCount >= 2) stayBias = -0.12;
 const adjustedStayScore = stayScore + stayBias;
 
+const here = world.map?.areasById?.[String(start)];
+const hereGround = Array.isArray(here?.groundItems) ? here.groundItems : [];
+const emptyHere = hereGround.length === 0;
 
-  // Inertia: don't move unless it is noticeably better.
-  // NOTE: We also add an explicit "leave empty areas" rule so NPCs don't freeze when there's
-  // no loot to fight for.
-  const here = world.map?.areasById?.[String(start)];
-  const hereGround = Array.isArray(here?.groundItems) ? here.groundItems : [];
-  const emptyHere = hereGround.length === 0;
+// Force movement in a few cases:
+// - area is empty (no reason to camp)
+// - NPC is fleeing
+// - Cornucopia-specific gate says they must leave immediately once allowed
+const forceMove = emptyHere || wantsFlee || forceLeaveCorn;
 
-  // If the current area is empty, strongly encourage moving.
-  // Cornucopia: don't force early dispersal too fast or most loot will never be contested.
-  // Start forcing dispersal only after getting at least 2 items, and only when the pile is small.
-  const cornLootLow = (Number(start) === 1) && (hereGround.length <= 6);
-  // FORCE DISPERSAL: if they grabbed an item today (or already have one) and are in area 1,
-  // they should move out immediately (unless trapped).
-  const forceLeaveCorn = (Number(start) === 1) && (grabbedCornToday || invCount >= 1);
-
-  // Cornucopia rule: NPCs try to grab at least one item before fleeing.
-  // Only ~20% will leave the Cornucopia empty-handed if loot is available.
-  const cornHasLoot = (Number(start) === 1) && (hereGround.length > 0);
-  const cornEmptyHanded = (Number(start) === 1) && (invCount === 0) && !grabbedCornToday;
-  // Empty-handed exit is only allowed (20%) after at least 2 "tries".
-  // A "try" = starting a day in the Cornucopia empty-handed while loot exists.
-  npc.memory = npc.memory || {};
-  if(cornHasLoot && cornEmptyHanded){
-    npc.memory.cornEmptyTries = Number(npc.memory.cornEmptyTries ?? 0) + 1;
-  } else if(Number(start) === 1 && (invCount > 0 || grabbedCornToday)){
-    npc.memory.cornEmptyTries = 0;
-  }
-  const triesNow = Number(npc.memory.cornEmptyTries ?? 0);
-  const cornLeaveEmptyRoll = hash01(seed, day, `corn_leave_empty|${npc.id}|${day}`);
-  const allowLeaveEmpty = cornHasLoot && cornEmptyHanded && (triesNow >= 2) && (cornLeaveEmptyRoll < 0.20);
-  // If we are empty-handed in the Cornucopia and loot exists, do not force movement
-  // unless we rolled the 20% exception or we are explicitly fleeing.
-  const cornBlocksForcedMove = cornHasLoot && cornEmptyHanded && !allowLeaveEmpty && !wantsFlee;
-  // If we haven't reached the 2-try threshold yet, block movement outright (loot scramble).
-  if(cornHasLoot && cornEmptyHanded && (triesNow < 2) && !wantsFlee){
-    return { source: npc.id, type: "STAY", payload: { reason: "corn_try" } };
-  }
-  const forceMove = (!cornBlocksForcedMove) && (emptyHere || forceLeaveCorn || wantsFlee || (Number(start) === 1 && invCount >= 2 && cornLootLow));
-
-  const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
+const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number(start) === 1 ? 0.06 : 0) - (invCount >= 2 ? 0.06 : 0);
   const canMove = forceLeaveCorn || forceMove || scored.some(s => !s.isStay && (s.score - adjustedStayScore) >= moveThreshold);
   if(!canMove) return { source: npc.id, type: "STAY", payload: {} };
 
