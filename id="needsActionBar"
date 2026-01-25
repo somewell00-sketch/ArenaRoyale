@@ -568,6 +568,7 @@ function renderGame(){
           </div>
 
           <div class="actionBar" id="needsActionBar">
+          <div style="padding 8px" ;="">Possible Actions:</div>
             <div class="row" style="gap:8px; flex-wrap:wrap;">
             <button id="btnDefend" class="btn blue" style="flex:1; min-width:120px;">Defend</button>
             <button id="btnNothing" class="btn ghost" style="flex:1; min-width:120px;">Nothing</button>
