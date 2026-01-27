@@ -1,29 +1,44 @@
 import { BIOME_PT, PALETTES, BIOME_BG } from "./mapgen.js";
 
-// --- Area texture overlay (image + color) ---
-// Toggle this to enable/disable the texture overlay.
-const USE_AREA_TEXTURE = true;
-// "cornucopia" = only area id=1, "all" = every visited area.
-const AREA_TEXTURE_APPLY = "all";
-// Overlay image URL (drawn with global alpha over the base area color).
-const AREA_TEXTURE_URL = "https://i.imgur.com/NcvFbYE.jpeg";
-// Strength of the overlay (0..1). This is multiplied by any area fade (e.g., closed zones).
-const AREA_TEXTURE_ALPHA = 0.25;
+// ------------------------------------------------------------
+// Selected-area texture overlay (image + base color)
+//
+// Place images in: ./bg/<biome>.jpeg (relative to index.html)
+// Optional for Cornucopia (area id=1): ./bg/cornucopia.jpeg
+//
+// Behavior:
+// - Texture appears ONLY when the area is selected (hovered)
+// - Uses the area biome name as the filename, lowercased
+// ------------------------------------------------------------
+const USE_SELECTED_AREA_TEXTURE = true;
+const SELECTED_AREA_TEXTURE_ALPHA = 0.28;
+const BIOME_TEXTURE_PATH = (key) => `bg/${key}.jpeg`;
 
-const _areaOverlayImage = new Image();
-_areaOverlayImage.src = AREA_TEXTURE_URL;
-
-function polyBounds(poly){
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for(const [x,y] of poly){
-    if(x < minX) minX = x;
-    if(y < minY) minY = y;
-    if(x > maxX) maxX = x;
-    if(y > maxY) maxY = y;
-  }
-  return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+const _biomeTextureCache = Object.create(null);
+function _getBiomeTexture(key){
+  const k = String(key || "").toLowerCase();
+  if(!k) return null;
+  if(_biomeTextureCache[k]) return _biomeTextureCache[k];
+  const img = new Image();
+  img.src = BIOME_TEXTURE_PATH(k);
+  _biomeTextureCache[k] = img;
+  return img;
 }
 
+function _polyBounds(poly){
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for(const p of poly){
+    const x = p[0], y = p[1];
+    if(x < x0) x0 = x;
+    if(y < y0) y0 = y;
+    if(x > x1) x1 = x;
+    if(y > y1) y1 = y;
+  }
+  if(!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)){
+    return { x:0, y:0, w:0, h:0 };
+  }
+  return { x:x0, y:y0, w:(x1-x0), h:(y1-y0) };
+}
 
 function rgbaFromHex(hex, a){
   const h = hex.replace("#","");
@@ -699,6 +714,7 @@ export class MapUI {
 
     const visited = new Set(this.world.flags.visitedAreas);
     const currentId = this.world.entities.player.areaId;
+    const selectedId = (this.hoveredId != null) ? this.hoveredId : null;
 
     // Clear in canvas space.
     ctx.setTransform(1,0,0,1,0,0);
@@ -741,20 +757,22 @@ export class MapUI {
       drawPath(ctx, c.poly);
       ctx.fill();
 
-      // Optional texture overlay (image on top of the base color).
-      if (USE_AREA_TEXTURE && _areaOverlayImage.complete && _areaOverlayImage.naturalWidth > 0){
-        const applyAll = (AREA_TEXTURE_APPLY === "all");
-        const applyCorn = (AREA_TEXTURE_APPLY === "cornucopia" && c.id === 1);
-        if (applyAll || applyCorn){
-          const b = polyBounds(c.poly);
-          // Respect any current fade (e.g., closed areas) by multiplying alpha.
-          const fade = (isClosed ? 0.10 : 1.00);
-          ctx.save();
-          ctx.globalAlpha = fade * AREA_TEXTURE_ALPHA;
-          drawPath(ctx, c.poly);
-          ctx.clip();
-          ctx.drawImage(_areaOverlayImage, b.x, b.y, b.w, b.h);
-          ctx.restore();
+      // Selected biome texture overlay (like Cornucopia highlight):
+      // Only when the area is selected/hovered.
+      if(USE_SELECTED_AREA_TEXTURE && selectedId != null && c.id === selectedId && !isClosed){
+        const texKey = (c.id === 1) ? "cornucopia" : String(area.biome || "").toLowerCase();
+        const img = _getBiomeTexture(texKey);
+        if(img && img.complete && img.naturalWidth > 0){
+          const b = _polyBounds(c.poly);
+          if(b.w > 0 && b.h > 0){
+            ctx.save();
+            // Clip to the cell polygon so the image stays inside it.
+            drawPath(ctx, c.poly);
+            ctx.clip();
+            ctx.globalAlpha = SELECTED_AREA_TEXTURE_ALPHA;
+            ctx.drawImage(img, b.x, b.y, b.w, b.h);
+            ctx.restore();
+          }
         }
       }
       ctx.restore();
