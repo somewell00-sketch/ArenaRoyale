@@ -991,6 +991,14 @@ function renderGame(){
         // Already covered in formatEvents.
         return "";
       }
+      case "MONSTER_AOE": {
+        if(e.who === "player"){
+          const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+          const verb = e.verb || "mauls";
+          return `${icon}${e.monsterName || "A monster"} ${verb} you for ${e.dmg} HP.`;
+        }
+        return "";
+      }
       case "DAMAGE_RECEIVED": {
         // Already covered in formatEvents.
         return "";
@@ -1127,9 +1135,11 @@ function renderGame(){
     }
     const here = p.areaId;
     const npcsHere = Object.values(world.entities.npcs || {}).filter(n => (n.hp ?? 0) > 0 && n.areaId === here);
+    const monstersHere = Object.values(world.entities.monsters || {}).filter(m => (m.hp ?? 0) > 0 && m.alive !== false && m.areaId === here);
     const items = [
       { id:"player", name:"You", district:p.district, selectable:false, entity:p },
       ...npcsHere.map(n => ({ id:n.id, name:n.name, district:n.district, selectable:true, entity:n }))
+      ,...monstersHere.map(m => ({ id:m.id, name:`${m.icon ? m.icon + ' ' : ''}${m.name}`, district:null, selectable:true, entity:m, isMonster:true }))
     ];
 
     areaPillsEl.innerHTML = items.length ? items.map(t => {
@@ -1139,7 +1149,7 @@ function renderGame(){
       const tipAttr = tip ? ` data-tooltip="${escapeHtml(tip)}"` : "";
       return `<button class="${cls}" data-id="${escapeHtml(t.id)}" ${t.selectable ? "" : "disabled"}${tipAttr}>
         <span class="pillName">${escapeHtml(t.name)}</span>
-        <span class="pillSub">${escapeHtml(districtTag(t.district))}</span>
+        <span class="pillSub">${escapeHtml(t.isMonster ? `HP ${Number(t.entity?.hp ?? 0)}/${Number(t.entity?.maxHp ?? 100)} • Monster` : districtTag(t.district))}</span>
       </button>`;
     }).join("") : `<div class="muted small">No one here</div>`;
 
@@ -1994,7 +2004,9 @@ function renderGame(){
     const npcName = (id) => {
       if(id === "player") return "You";
       const n = world?.entities?.npcs?.[id];
-      return n?.name || id;
+      if(n?.name) return n.name;
+      const m = world?.entities?.monsters?.[id];
+      return m?.name || id;
     };
 
     const out = [];
@@ -2093,6 +2105,27 @@ function renderGame(){
           }
           break;
         }
+        case "MONSTER_AOE": {
+          const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+          const verb = e.verb || "mauls";
+          if(e.who === "player") out.push(`${icon}${e.monsterName} ${verb} you. You lost ${e.dmg} HP.`);
+          else out.push(`${icon}${e.monsterName} ${verb} ${npcName(e.who)}.`);
+          break;
+        }
+        case "MONSTER_DIE_DROP": {
+          const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+          const count = Number(e.count || 0);
+          out.push(`${icon}${e.monsterName} was slain. ${count || 10} items scattered on the ground.`);
+          break;
+        }
+        case "MONSTER_MOVE": {
+          // Keep subtle: only show if the player is involved (same area).
+          if(e.to === world?.entities?.player?.areaId || e.from === world?.entities?.player?.areaId){
+            const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+            out.push(`${icon}${e.monsterName} roams to Area ${e.to}.`);
+          }
+          break;
+        }
         case "NOTHING": {
           out.push("You did nothing.");
           if(e.note === "caught_off_guard") out.push("You were caught off guard.");
@@ -2176,9 +2209,28 @@ function renderGame(){
           if(e.who === "player"){
             if(e.reason === "area_closed") out.push("You died: your area vanished.");
             else if(e.reason === "starvation") out.push("You died of starvation.");
+            else if(e.reason === "monster") out.push(`You died to ${e.monsterName || "a monster"}.`);
             else out.push("You died.");
           }
           else out.push(`${npcName(e.who)} died.`);
+          break;
+        }
+
+        case "MONSTER_AOE": {
+          if(e.who === "player"){
+            const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+            const verb = e.verb || "mauls";
+            out.push(`${icon}${e.monsterName || "A monster"} ${verb} you for ${e.dmg} HP.`);
+          } else {
+            const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+            const verb = e.verb || "mauls";
+            out.push(`${icon}${e.monsterName || "A monster"} ${verb} ${npcName(e.who)}.`);
+          }
+          break;
+        }
+        case "MONSTER_DIE_DROP": {
+          const icon = e.monsterIcon ? `${e.monsterIcon} ` : "";
+          out.push(`${icon}${e.monsterName || "A monster"} was slain. ${e.count || 10} items scattered on the ground.`);
           break;
         }
 

@@ -293,7 +293,101 @@ function canEnter(world, toAreaId){
 
 function actorById(world, id){
   if(id === "player") return world.entities.player;
-  return world.entities.npcs?.[id];
+  if(world.entities.npcs?.[id]) return world.entities.npcs[id];
+  if(world.entities.monsters?.[id]) return world.entities.monsters[id];
+  return null;
+}
+
+function livingMonsters(world){
+  const ms = Object.values(world?.entities?.monsters || {});
+  return ms.filter(m => m && m.alive !== false && (m.hp ?? 0) > 0);
+}
+
+function handleMonsterDeathDrops(world, events, { seed, day } = {}){
+  const monsters = Object.values(world?.entities?.monsters || {});
+  if(!monsters.length) return;
+  const allDefs = getAllItemDefs();
+  const itemIds = Object.keys(allDefs || {}).filter(id => id && id !== "backpack");
+  if(!itemIds.length) return;
+
+  for(const m of monsters){
+    if(!m) continue;
+    if(m.alive === false) continue;
+    if((m.hp ?? 0) > 0) continue;
+    // Mark dead and drop once.
+    m.alive = false;
+    if(m.dropped) continue;
+    m.dropped = true;
+
+    const areaId = Number(m.areaId) || 1;
+    const area = world?.map?.areasById?.[String(areaId)];
+    if(area){
+      if(!Array.isArray(area.groundItems)) area.groundItems = [];
+      for(let i=0;i<10;i++){
+        const r = prng(seed, day, `monster_drop|${m.id}|${i}`);
+        const pick = itemIds[Math.floor(r * itemIds.length)] || itemIds[0];
+        area.groundItems.push({ defId: pick, qty: 1, meta: { spawned: true, fromMonster: m.id } });
+      }
+    }
+
+    events.push({
+      type: "MONSTER_DIE_DROP",
+      monsterId: m.id,
+      monsterName: m.name,
+      monsterIcon: m.icon,
+      areaId,
+      count: 10
+    });
+  }
+}
+
+function resolveMonsterRoamAndAoE(world, events, { seed, day } = {}){
+  const monsters = livingMonsters(world);
+  if(!monsters.length) return;
+
+  for(const m of monsters){
+    // --- Roam ---
+    const roamSet = Array.isArray(m.roamSet) ? m.roamSet.map(Number) : [];
+    const adj = Array.isArray(world?.map?.adjById?.[String(m.areaId)])
+      ? world.map.adjById[String(m.areaId)].map(Number)
+      : [];
+    const legal = adj.filter(id => roamSet.includes(Number(id)));
+    if(legal.length){
+      const r = prng(seed, day, `monster_roam|${m.id}`);
+      const to = legal[Math.floor(r * legal.length)] || legal[0];
+      const from = Number(m.areaId);
+      m.areaId = Number(to);
+      events.push({ type:"MONSTER_MOVE", monsterId: m.id, monsterName: m.name, monsterIcon: m.icon, from, to });
+    }
+
+    // --- AoE attack ---
+    const areaId = Number(m.areaId);
+    const dmg = Number(m.dmgAoE ?? 35);
+    const verb = String(m.verb || "mauls");
+
+    // Player
+    const p = world?.entities?.player;
+    if(p && (p.hp ?? 0) > 0 && p.areaId === areaId){
+      applyDamage(p, dmg);
+      events.push({ type:"MONSTER_AOE", who: "player", monsterId: m.id, monsterName: m.name, monsterIcon: m.icon, verb, dmg, areaId });
+      if((p.hp ?? 0) <= 0){
+        events.push({ type:"DEATH", who:"player", areaId, reason:"monster", monsterId: m.id, monsterName: m.name });
+      }
+    }
+
+    // NPCs
+    for(const npc of Object.values(world?.entities?.npcs || {})){
+      if(!npc || (npc.hp ?? 0) <= 0) continue;
+      if(npc.areaId !== areaId) continue;
+      applyDamage(npc, dmg);
+      events.push({ type:"MONSTER_AOE", who: npc.id, monsterId: m.id, monsterName: m.name, monsterIcon: m.icon, verb, dmg, areaId });
+      if((npc.hp ?? 0) <= 0){
+        events.push({ type:"DEATH", who: npc.id, areaId, reason:"monster", monsterId: m.id, monsterName: m.name });
+        world.flags.killsThisDay = Array.isArray(world.flags.killsThisDay) ? world.flags.killsThisDay : [];
+        world.flags.killsThisDay.push({ deadId: npc.id, areaId, participants: [m.id], reason: "monster" });
+      }
+    }
+  }
 }
 
 function getWeaponInstance(entity, defId){
@@ -988,6 +1082,8 @@ export function commitPlayerAction(world, action){
     }
 
     // Finalize action resolution.
+    // If the player (or an NPC during this resolution) killed a monster, drop loot immediately.
+    handleMonsterDeathDrops(next, events, { seed, day });
     return { nextWorld: next, events };
   }
 
@@ -2072,6 +2168,11 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       events.push({ type:"STAY", who: act.source });
     }
   }
+
+  // --- Monsters: roam + AoE hazard (after NPC movement) ---
+  resolveMonsterRoamAndAoE(next, events, { seed, day });
+  // If anyone killed a monster today (or it died in AoE side-effects), drop loot now.
+  handleMonsterDeathDrops(next, events, { seed, day });
 
   // Update NPC memory after movement (cheap variance + limited perception support).
   for(const npc of Object.values(next.entities.npcs || {})){

@@ -651,7 +651,9 @@ for (let i = 1; i <= npcCount; i++){
         noiseLastAreaId: 1,
         noiseStayDays: 1
       },
-      npcs
+      npcs,
+      // Special roaming monsters (one per arena).
+      monsters: {}
     },
     systems: {
       combat: { declarations: {} }
@@ -666,6 +668,135 @@ for (let i = 1; i <= npcCount; i++){
     replay: {
       playerActionsByDay: []
     }
+  };
+
+  // --- Arena monsters ---
+  // One special monster per arena, roaming among the 10 starting non-cornucopia areas.
+  // Mechanics are handled in sim.js; this only defines the entity.
+  const MONSTER_DEFS_BY_ARENA = {
+    "Survival Arena": {
+      id: "corrupted_beast",
+      name: "The Corrupted Beast",
+      icon: "☣️",
+      verb: "mauls"
+    },
+    "Himani Arena": {
+      id: "glacier_wraith",
+      name: "The Glacier Wraith",
+      icon: "🧊👁️",
+      verb: "rends"
+    },
+    "Kunlun Arena": {
+      id: "pale_wendigo",
+      name: "The Pale Wendigo",
+      icon: "🦴❄️",
+      verb: "devours"
+    },
+    "Orqo Arena": {
+      id: "labyrinth_warden",
+      name: "The Labyrinth Warden",
+      icon: "🐂🪨",
+      verb: "gore"
+    },
+    "Sahari Arena": {
+      id: "sun_eaten_colossus",
+      name: "The Sun-Eaten Colossus",
+      icon: "🗿☀️",
+      verb: "crushes"
+    },
+    "Baraúna Arena": {
+      id: "thorned_raider",
+      name: "The Thorned Raider",
+      icon: "🌵🩸",
+      verb: "tears"
+    },
+    "Savanaari Arena": {
+      id: "dune_manticore",
+      name: "The Dune Manticore",
+      icon: "🦁☠️",
+      verb: "slashes"
+    },
+    "Pampaari Arena": {
+      id: "storm_roc",
+      name: "The Storm Roc",
+      icon: "🦅⚡",
+      verb: "strikes"
+    },
+    "Aranya Arena": {
+      id: "verdant_lycan",
+      name: "The Verdant Lycan",
+      icon: "🐺🌿",
+      verb: "mauls"
+    },
+    "Ka’aguay Arena": {
+      id: "rootbound_leshy",
+      name: "The Rootbound Leshy",
+      icon: "🌳👁️",
+      verb: "entangles"
+    },
+    "Yvapurũ Arena": {
+      id: "boitata",
+      name: "Boitatá, the Burning Coil",
+      icon: "🐍🔥",
+      verb: "scorches"
+    },
+    "Tianxian Arena": {
+      id: "jade_kirin",
+      name: "The Jade Kirin",
+      icon: "🐉✨",
+      verb: "smite"
+    },
+    "Pantanari Arena": {
+      id: "mire_goat",
+      name: "The Mire Goat",
+      icon: "🐐🩸",
+      verb: "drains"
+    },
+    "Mayu Arena": {
+      id: "drowned_kelpie",
+      name: "The Drowned Kelpie",
+      icon: "🐴🌊",
+      verb: "drags"
+    },
+    "Karkhan Arena": {
+      id: "iron_revenant",
+      name: "The Iron Revenant",
+      icon: "⚙️💀",
+      verb: "shreds"
+    }
+  };
+
+  const arenaName = String(world?.map?.arenaName || "Survival Arena");
+  const monsterDef = MONSTER_DEFS_BY_ARENA[arenaName] || MONSTER_DEFS_BY_ARENA["Survival Arena"];
+
+  // Roam among areas 2..11 (exclude Cornucopia id=1).
+  const roamSet = [];
+  for(let i=2;i<=11;i++) roamSet.push(i);
+
+  // Spawn position: deterministic but varied.
+  const spawn = roamSet[Math.floor(rng.next() * roamSet.length)] || 2;
+
+  world.entities.monsters = world.entities.monsters || {};
+  world.entities.monsters["monster_1"] = {
+    id: "monster_1",
+    kind: "monster",
+    defId: monsterDef.id,
+    name: monsterDef.name,
+    icon: monsterDef.icon,
+    verb: monsterDef.verb,
+    areaId: spawn,
+    hp: 100,
+    maxHp: 100,
+    fp: 100,
+    dmgAoE: 35,
+    roamSet,
+    alive: true,
+    dropped: false,
+    // Basic combat attributes so existing combat helpers remain safe.
+    attrs: { F: 8, D: 8, P: 8 },
+    status: [],
+    inventory: createEmptyInventory(),
+    memory: { goal: "roam" }
   };
 
   // Ensure area 1 is Cornucopia biome

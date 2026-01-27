@@ -136,6 +136,13 @@ function buildObservedWorld(world, npc){
     hereActors.push({ id: other.id, kind: "npc", entity: other });
   }
 
+  // Monsters (always visible; act as special hostile NPC-like entities).
+  for(const m of Object.values(world?.entities?.monsters || {})){
+    if(!m || m.alive === false || (m.hp ?? 0) <= 0) continue;
+    if(m.areaId !== npc.areaId) continue;
+    hereActors.push({ id: m.id, kind: "monster", entity: m });
+  }
+
   const adj = Array.isArray(world.map?.adjById?.[String(npc.areaId)])
     ? world.map.adjById[String(npc.areaId)].map(Number)
     : [];
@@ -347,12 +354,12 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, aiP
   }
 
   // Attack/Defend/Nothing: evaluate targets in the same area.
-  const targets = obs.hereActors
-    .map(x => x.entity)
-    .filter(t => t && (t.hp ?? 0) > 0 && t.areaId === npc.areaId);
+  const targets = (obs.hereActors || [])
+    .filter(x => x && x.entity && (x.entity.hp ?? 0) > 0 && x.entity.areaId === npc.areaId)
+    .map(x => ({ kind: x.kind, entity: x.entity }));
 
   // Context for social pressure / dogpiles
-  const allActors = [npc, ...targets];
+  const allActors = [npc, ...targets.map(t => t.entity)];
   const actorsInArea = allActors.length;
 
   // Find current "kill leader" among alive entities (for threat targeting)
@@ -386,7 +393,9 @@ function decidePosture(world, npc, obs, traits, { seed, day, playerDistrict, aiP
 let bestAttack = null;
   let bestAttackScore = -1e9;
 
-  for(const t of targets){
+  for(const tWrap of targets){
+    const t = tWrap.entity;
+    const isMonster = tWrap.kind === "monster" || String(t?.id || "").startsWith("monster_");
     // District bias: less likely to attack same district and less likely to attack player's district.
     const sameDistrict = (t.district != null && npc.district != null && t.district === npc.district);
     const playerDistrictBias = (playerDistrict != null && t.district != null && t.district === playerDistrict);
@@ -409,6 +418,12 @@ let bestAttack = null;
     if(hpP < 0.30) score -= 0.65;
 
     if(hasStrongWeapon) score += 0.55 * prof.aggression;
+    // Special-case: monsters are high-value threats. Bias toward engaging if capable.
+    if(isMonster){
+      score += 0.95;
+      if(hasDamageItem(npc.inventory)) score += 0.35;
+      if(hpPercent(npc) < 0.35) score -= 0.85;
+    }
     if(sameDistrict) score -= 0.55;
     if(playerDistrictBias) score -= 0.20;
 
