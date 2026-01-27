@@ -908,7 +908,10 @@ function itemValue(def, inst){
 function maxStepsForNpc(npc){
   const hp = npc.hp ?? 100;
   const fp = npc.fp ?? 100;
-  return (hp > 30 && fp > 20) ? 3 : 1;
+  if(hp <= 30) return 1;
+  if(fp <= 20) return 1;
+  if(fp <= 30) return 2;
+  return 3;
 }
 
 function makeTraits(seed, id, district){
