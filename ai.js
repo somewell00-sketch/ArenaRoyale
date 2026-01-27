@@ -536,6 +536,16 @@ function decideMove(world, npc, obs, traits, { seed, day, aiPhase, phaseProfile 
   const invCountNow = inventoryCount(npc.inventory);
   const wantsFlee = !!npc?.memory?._wantsFlee;
 
+  // FP recovery rule:
+  // If FP drops below 30, the NPC prioritizes returning to the Cornucopia (Area 1).
+  // This produces more believable "refuel" behavior without exposing mechanics to the player.
+  if(!inCornucopia && (npc.fp ?? 0) < 30){
+    const routeToCorn = shortestRoute(world, Number(npc.areaId), 1, max, { day });
+    if(routeToCorn && routeToCorn.length){
+      return { source: npc.id, type: "MOVE", payload: { route: routeToCorn } };
+    }
+  }
+
   const visitedSet = new Set(Array.isArray(npc.memory?.visited) ? npc.memory.visited : []);
 
   // Cornucopia exit rule:
@@ -636,6 +646,38 @@ const moveThreshold = (0.14 + traits.caution * 0.10) + (invCount === 0 && Number
   return { source: npc.id, type: "MOVE", payload: { route: chosen.route } };
 }
 
+function shortestRoute(world, startId, goalId, maxSteps, { day }){
+  const start = Number(startId);
+  const goal = Number(goalId);
+  const max = Math.max(1, Number(maxSteps || 1));
+  if(start === goal) return [];
+
+  // BFS with route reconstruction, honoring the same movement constraints used by decideMove.
+  const q = [{ id: start, steps: 0, route: [] }];
+  const seen = new Set([start]);
+
+  while(q.length){
+    const cur = q.shift();
+    if(cur.steps >= max) continue;
+    const adj = world.map?.adjById?.[String(cur.id)] || [];
+    for(const nxt of adj){
+      const nid = Number(nxt);
+      if(seen.has(nid)) continue;
+      seen.add(nid);
+      const a = world.map?.areasById?.[String(nid)];
+      if(!a || a.isActive === false) continue;
+      if(a.hasWater && !a.hasBridge) continue;
+      const willCloseTomorrow = (a.willCloseOnDay != null) && (Number(a.willCloseOnDay) === Number(day) + 1);
+      if(willCloseTomorrow) continue;
+
+      const route = [...cur.route, nid];
+      if(nid === goal) return route;
+      q.push({ id: nid, steps: cur.steps + 1, route });
+    }
+  }
+  return [];
+}
+
 function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day }){
   const a = world.map?.areasById?.[String(areaId)];
   if(!a) return -1e9;
@@ -727,7 +769,8 @@ function scoreArea(world, npc, areaId, steps, traits, visitedSet, { seed, day })
   const last = Array.isArray(npc.memory?.lastAreas) ? npc.memory.lastAreas : [];
   const recentPenalty = last.includes(Number(areaId)) ? 0.12 : 0;
 
-  const distanceCost = steps * 0.12;
+  // Lower distance cost encourages wider roaming (2–3 steps) while preserving strategy.
+  const distanceCost = steps * 0.07;
 
   // HUNT: healthy + armed NPCs bias toward populated areas (higher chance to find a target).
   // We use the true world state here to keep behavior punchy; the player only sees diegetic hints.
