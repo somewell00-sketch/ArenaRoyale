@@ -771,7 +771,7 @@ for (let i = 1; i <= npcCount; i++){
 
 // Roam among areas 1..11 (include Cornucopia id=1).
 const roamSet = [];
-for(let i = 1; i <= 11; i++) roamSet.push(i);
+for(let i = 1; i <= 18; i++) roamSet.push(i);
 
 // Spawn set: exclude Cornucopia (id=1)
 const spawnSet = roamSet.filter(id => id !== 1);
