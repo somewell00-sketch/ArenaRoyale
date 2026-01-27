@@ -769,12 +769,15 @@ for (let i = 1; i <= npcCount; i++){
   const arenaName = String(world?.map?.arenaName || "Survival Arena");
   const monsterDef = MONSTER_DEFS_BY_ARENA[arenaName] || MONSTER_DEFS_BY_ARENA["Survival Arena"];
 
-  // Roam among areas 2..11 (exclude Cornucopia id=1).
-  const roamSet = [];
-  for(let i=2;i<=11;i++) roamSet.push(i);
+// Roam among areas 1..11 (include Cornucopia id=1).
+const roamSet = [];
+for(let i = 1; i <= 11; i++) roamSet.push(i);
 
-  // Spawn position: deterministic but varied.
-  const spawn = roamSet[Math.floor(rng.next() * roamSet.length)] || 2;
+// Spawn set: exclude Cornucopia (id=1)
+const spawnSet = roamSet.filter(id => id !== 1);
+
+// Spawn position: deterministic but varied.
+const spawn = spawnSet[Math.floor(rng.next() * spawnSet.length)] || 2;
 
   world.entities.monsters = world.entities.monsters || {};
   world.entities.monsters["monster_1"] = {
