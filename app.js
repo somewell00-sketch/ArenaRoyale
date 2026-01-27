@@ -1549,7 +1549,20 @@ function renderGame(){
           attrs: n.attrs,
           inv: n.inventory,
           kills: n.kills || 0,
-        }))
+        })),
+        ...Object.values(world.entities.monsters || {}).map(m => ({
+          id: m.id,
+          name: `${m.icon || "🟣"} ${m.name || "Monster"}`,
+          district: null,
+          hp: m.hp ?? 0,
+          fp: null,
+          areaId: m.areaId,
+          dead: !((m.alive ?? true)) || (m.hp ?? 0) <= 0,
+          attrs: null,
+          inv: null,
+          kills: 0,
+          isMonster: true,
+        })),
       ];
       everyone.sort((a,b) => (a.dead - b.dead) || (a.areaId - b.areaId) || String(a.name).localeCompare(String(b.name)));
       debugList.innerHTML = everyone.map(t => {
@@ -1559,9 +1572,11 @@ function renderGame(){
         const P = t.attrs?.P ?? 0;
         const K = Number(t.kills || 0);
         const invHtml = renderInvPills(t.inv);
+        const tagHtml = t.isMonster ? `<span class="muted tiny">🟣 Monster</span>` : `<span class="muted tiny">${escapeHtml(districtTag(t.district))}</span>`;
+        const fpTxt = t.isMonster ? "—" : String(t.fp ?? 100);
         return `<div class="debugCard ${t.dead ? "dead" : ""}">
-          <div class="debugTop"><strong>${escapeHtml(t.name)}</strong><span class="muted tiny">${escapeHtml(districtTag(t.district))}</span></div>
-          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(String(t.fp ?? 100))}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>K${escapeHtml(String(K))}</span><span>${status}</span></div>
+          <div class="debugTop"><strong>${escapeHtml(t.name)}</strong>${tagHtml}</div>
+          <div class="debugBottom"><span>HP ${escapeHtml(String(t.hp))}</span><span>FP ${escapeHtml(fpTxt)}</span><span>Area ${escapeHtml(String(t.areaId))}</span><span>F${escapeHtml(String(F))} D${escapeHtml(String(D))} P${escapeHtml(String(P))}</span><span>K${escapeHtml(String(K))}</span><span>${status}</span></div>
           <div class="debugInv">${invHtml}</div>
         </div>`;
       }).join("") || `<div class="muted small">—</div>`;
