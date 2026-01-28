@@ -1148,8 +1148,8 @@ function renderGame(){
     uiState.movesUsed += 1;
     uiState.dayEvents.push(...res.events);
 
-    // If something immediate happened on entering (e.g., creature attack), show it now.
-    const immediate = (res.events || []).some(e => (e.who === "player") && (e.type === "CREATURE_ATTACK" || e.type === "POISON_APPLIED" || e.type === "DEATH"));
+    // If something immediate happened on entering (e.g., creature attack, mine, hazard), show it now.
+    const immediate = (res.events || []).some(e => (e.who === "player") && (e.type === "CREATURE_ATTACK" || e.type === "POISON_APPLIED" || e.type === "MINE_HIT" || e.type === "TRAPPED" || e.type === "THREAT" || e.type === "HOSTILE_EVENT" || e.type === "LASER" || e.type === "DEATH"));
     if(immediate){
       openResultDialog(res.events || []);
     }
@@ -1711,6 +1711,12 @@ function renderGame(){
       btnNothing.disabled = false;
       if(btnDrink) btnDrink.disabled = false;
       btnAttack.disabled = (Number(p.fp ?? 0) < 10);
+      // UX: explain disabled Attack button when FP is too low.
+      if(btnAttack.disabled){
+        btnAttack.title = "Starving. You are too exhausted to attack.";
+      } else {
+        btnAttack.title = "";
+      }
       // Collect availability handled in renderGroundItem()
       btnEndDay.disabled = false;
     }
