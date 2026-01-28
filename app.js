@@ -84,6 +84,74 @@ let world = null;
 // Stored in-memory in app.js only (does not affect sim/ai/state/sync).
 let toastLog = [];
 
+// --- UI-only narrative memory (area scars + light mood/foreshadowing) ---
+// Stored under `world.uiNarrative` so it never affects sim rules.
+function ensureUiNarrative(){
+  if(!world) return null;
+  if(!world.uiNarrative){
+    world.uiNarrative = {
+      areas: {},
+      // cooldowns / last-shown markers to avoid spam
+      lastAreaNarrativeAt: {},
+      lastMoodToastDay: 0,
+      lastMoodKey: "",
+      lastQuietToastAt: { day: 0, areaId: 0, n: 0 }
+    };
+  }
+  if(!world.uiNarrative.areas) world.uiNarrative.areas = {};
+  if(!world.uiNarrative.lastAreaNarrativeAt) world.uiNarrative.lastAreaNarrativeAt = {};
+  if(!world.uiNarrative.lastQuietToastAt) world.uiNarrative.lastQuietToastAt = { day: 0, areaId: 0, n: 0 };
+  return world.uiNarrative;
+}
+
+function getAreaNarrative(areaId){
+  const ui = ensureUiNarrative();
+  if(!ui) return null;
+  const k = String(areaId ?? "");
+  if(!ui.areas[k]){
+    ui.areas[k] = {
+      lastPlayerInjuryDay: 0,
+      lastPlayerInjuryCause: "",
+      deaths: [] // { name, day }
+    };
+  }
+  return ui.areas[k];
+}
+
+function areaName(areaId){
+  const a = world?.map?.areasById?.[String(areaId ?? "")];
+  if(!a) return `Area ${areaId}`;
+  // Prefer label if present; fall back to numeric.
+  return a.name || a.label || `Area ${areaId}`;
+}
+
+function recordPlayerInjury({ areaId, causeText } = {}){
+  const ui = ensureUiNarrative();
+  if(!ui) return;
+  const aId = Number(areaId ?? world?.entities?.player?.areaId ?? 1);
+  const day = Number(world?.meta?.day ?? 0);
+  const mem = getAreaNarrative(aId);
+  if(!mem) return;
+  mem.lastPlayerInjuryDay = day;
+  mem.lastPlayerInjuryCause = String(causeText || "").trim();
+}
+
+function recordAreaDeath({ areaId, whoId } = {}){
+  const ui = ensureUiNarrative();
+  if(!ui) return;
+  const aId = Number(areaId ?? world?.entities?.player?.areaId ?? 1);
+  const day = Number(world?.meta?.day ?? 0);
+  if(!whoId || whoId === "player") return;
+  const n = world?.entities?.npcs?.[whoId];
+  const name = (n?.name || String(whoId)).trim();
+  const mem = getAreaNarrative(aId);
+  if(!mem) return;
+  mem.deaths = Array.isArray(mem.deaths) ? mem.deaths : [];
+  mem.deaths.push({ name, day });
+  // keep only the last 2 to avoid clutter
+  if(mem.deaths.length > 2) mem.deaths.splice(0, mem.deaths.length - 2);
+}
+
 const uiState = {
   focusedAreaId: 1,
   phase: "needs_action", // needs_action | explore
@@ -1086,10 +1154,41 @@ function renderGame(){
       if(ctx){
         const dmg = __evtDamageAmount(e);
         pushToast(ctx, { kind:"event", ttl: 0, silent: true, meta: { damageToPlayer: true, eventType: e?.type || "", dmg } });
+
+        // UI-only narrative memory: mark this area as previously injurious.
+        try { recordPlayerInjury({ areaId: e?.areaId ?? world?.entities?.player?.areaId, causeText: ctx }); } catch(_e) {}
+      }
+
+      // UI-only narrative memory: remember where tributes fell.
+      if(e?.type === "DEATH"){
+        try { recordAreaDeath({ areaId: e?.areaId, whoId: e?.who }); } catch(_e) {}
       }
     }
     const lines = formatEvents(events).filter(Boolean);
-    if(!lines.length) return;
+    if(!lines.length){
+      // Text-only pacing: when nothing notable happens, let the silence speak (but don't spam).
+      try {
+        const ui = ensureUiNarrative();
+        const day = Number(world?.meta?.day ?? 0);
+        const areaId = Number(world?.entities?.player?.areaId ?? 1);
+        const last = ui?.lastQuietToastAt || { day:0, areaId:0, n:0 };
+        const sameSpot = (last.day === day) && (last.areaId === areaId);
+        const n = sameSpot ? (Number(last.n || 0) + 1) : 1;
+        // Show at most 1 quiet line per area per day.
+        if(!sameSpot){
+          const quietLines = [
+            "Nothing happens. The silence stretches on.",
+            "Time passes. Too quietly.",
+            "You wait. Nothing comes.",
+            "Only wind and distant stillness."
+          ];
+          const t = pickDeterministic(quietLines, `quiet:${day}:${areaId}`);
+          if(t) pushToast(t, { kind:"info", ttl: 8000 });
+          if(ui) ui.lastQuietToastAt = { day, areaId, n };
+        }
+      } catch(_e) {}
+      return;
+    }
     const chunks = [];
     for(let i=0;i<lines.length;i+=limit) chunks.push(lines.slice(i, i+limit));
     for(const c of chunks) pushToast(c, { kind:"event" });
@@ -1123,6 +1222,70 @@ function renderGame(){
     }
   });
 
+  function emitAreaArrivalNarrative(areaId, incomingEvents = []){
+    // UI-only, text-only: make places feel remembered.
+    try {
+      const ui = ensureUiNarrative();
+      if(!ui) return;
+      const day = Number(world?.meta?.day ?? 0);
+      const key = `${day}:${areaId}`;
+      if(ui.lastAreaNarrativeAt?.[key]) return;
+
+      const mem = getAreaNarrative(areaId);
+      const lines = [];
+
+      // "You were injured here earlier." (only if it happened on a previous day)
+      if(mem && Number(mem.lastPlayerInjuryDay || 0) > 0 && Number(mem.lastPlayerInjuryDay || 0) < day){
+        const injuryLines = [
+          "You were injured here earlier.",
+          "You remember being hurt in this place.",
+          "This area has cost you blood before."
+        ];
+        lines.push(pickDeterministic(injuryLines, `injury:${mem.lastPlayerInjuryDay}:${areaId}`));
+      }
+
+      // "This is where X died." (last known death, if any)
+      if(mem && Array.isArray(mem.deaths) && mem.deaths.length){
+        const last = mem.deaths[mem.deaths.length - 1];
+        const nm = String(last?.name || "").trim();
+        if(nm){
+          const deathLines = [
+            `This is where ${nm} died.`,
+            `${nm} fell here.`,
+            `A tribute named ${nm} was killed in this area.`
+          ];
+          lines.push(pickDeterministic(deathLines, `death:${last?.day || 0}:${areaId}:${nm}`));
+        }
+      }
+
+      // Foreshadowing: hint at danger without explaining mechanics.
+      const aliveHere = Object.values(world?.entities?.npcs || {}).filter(n => (n?.hp ?? 0) > 0 && n?.areaId === areaId);
+      const hazardsIncoming = (incomingEvents || []).some(e => e && (e.type === "MINE_HIT" || e.type === "THREAT" || e.type === "HOSTILE_EVENT" || e.type === "LASER" || e.type === "CREATURE_ATTACK" || e.type === "TRAPPED"));
+      if(hazardsIncoming){
+        const omenLines = [
+          "The air here feels wrong.",
+          "Something about this place makes you tense.",
+          "You feel exposed the moment you step in."
+        ];
+        lines.push(pickDeterministic(omenLines, `omen:${day}:${areaId}`));
+      } else if(aliveHere.length){
+        const presenceLines = [
+          "You feel like you're not alone.",
+          "Faint movement echoes nearby.",
+          "You sense eyes on you."
+        ];
+        lines.push(pickDeterministic(presenceLines, `presence:${day}:${areaId}:${aliveHere.length}`));
+      }
+
+      // Keep it concise: at most 2 lines so it doesn't drown actual events.
+      const out = lines.map(s => String(s || "").trim()).filter(Boolean).slice(0, 2);
+      if(out.length){
+        for(const t of out) pushToast(t, { kind:"info", ttl: 9000 });
+        ui.lastAreaNarrativeAt[key] = true;
+      }
+    } catch(_e) {}
+  }
+
   function handleAreaClick(id){
     if(!world) return;
 
@@ -1148,6 +1311,9 @@ function renderGame(){
 
     uiState.movesUsed += 1;
     uiState.dayEvents.push(...res.events);
+
+    // UI-only: area arrival narrative (scars, deaths, and light foreshadowing).
+    emitAreaArrivalNarrative(id, res.events || []);
 
     // If something immediate happened on entering (e.g., creature attack, mine, hazard), show it now.
     const immediate = (res.events || []).some(e => (e.who === "player") && (e.type === "CREATURE_ATTACK" || e.type === "POISON_APPLIED" || e.type === "MINE_HIT" || e.type === "TRAPPED" || e.type === "THREAT" || e.type === "HOSTILE_EVENT" || e.type === "LASER" || e.type === "DEATH"));
@@ -1720,6 +1886,53 @@ function renderGame(){
       }
       // Collect availability handled in renderGroundItem()
       btnEndDay.disabled = false;
+
+      // UI-only: light internal narration based on your condition (text-only, low-cost).
+      try {
+        const ui = ensureUiNarrative();
+        const day = Number(world?.meta?.day ?? 0);
+        const hp = Number(p?.hp ?? 0);
+        const fp = Number(p?.fp ?? 0);
+        const status = Array.isArray(p?.status) ? p.status : [];
+
+        let key = "";
+        if(hp > 0 && hp <= 25) key = "wounded";
+        else if(fp <= 0) key = "starving";
+        else if(fp > 0 && fp <= 20) key = "exhausted";
+        else if(status.some(s => String(s || "").toLowerCase().includes("poison"))) key = "poisoned";
+
+        if(ui && key){
+          const changed = (ui.lastMoodToastDay !== day) || (ui.lastMoodKey !== key);
+          if(changed){
+            const linesByKey = {
+              wounded: [
+                "Every movement hurts.",
+                "Your body protests with each step.",
+                "You're bleeding. You should be careful."
+              ],
+              exhausted: [
+                "You feel exhausted.",
+                "Your legs feel heavy.",
+                "You can barely catch your breath."
+              ],
+              starving: [
+                "Your body is starting to fail.",
+                "Hunger claws at your focus.",
+                "You are starving and out of energy."
+              ],
+              poisoned: [
+                "Something toxic burns in your veins.",
+                "Your stomach churns. The poison isn't done with you.",
+                "You feel sick."
+              ]
+            };
+            const pick = pickDeterministic(linesByKey[key] || [], `mood:${day}:${key}`);
+            if(pick) pushToast(pick, { kind:"info", ttl: 9000 });
+            ui.lastMoodToastDay = day;
+            ui.lastMoodKey = key;
+          }
+        }
+      } catch(_e) {}
     }
   }
 
@@ -1968,6 +2181,11 @@ function renderGame(){
         <div class="h1" style="margin:0;">${title}</div>
         <div class="muted" style="margin-top:8px;">${msg}</div>
 
+        <div class="muted" style="margin-top:8px;">
+          You survived <strong>${dayNum}</strong> day(s).<br>
+          You killed <strong>${kills}</strong> tribute(s).
+        </div>
+
         <div class="muted small" style="margin-top:10px;"><strong>Cause:</strong> <span id="deathCause"></span></div>
 
         <div class="section" style="margin-top:10px; padding:10px; border-radius:12px;">
@@ -2064,6 +2282,11 @@ function renderGame(){
       <div class="modal">
         <div class="h1" style="margin:0;">Victory</div>
         <div class="muted" style="margin-top:8px;">Congratulations. You are the last tribute alive.</div>
+
+        <div class="muted" style="margin-top:8px;">
+          You survived <strong>${dayNum}</strong> day(s).<br>
+          You killed <strong>${kills}</strong> tribute(s).
+        </div>
 
         <div class="section" style="margin-top:10px; padding:10px; border-radius:12px;">
           <div class="muted small"><strong>Placement:</strong> <span id="statPlacement"></span></div>
