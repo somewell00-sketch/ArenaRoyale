@@ -7,8 +7,8 @@
   --text: #f0f0f2;
   --muted: #b9a6a1;
 
-  --primary: #c36a2d;      /* Desert Sun */
-  --primary-2: #d07b3f;
+  --primary: #9f0bcf;      /* Desert Sun */
+  --primary-2: #da1deb;
   --accent: #fad02c;       /* Yellow */
   --danger: #ff3b3b;
 
@@ -156,7 +156,7 @@ a{ color: var(--accent); }
 
 .btn{
   font-family: var(--hud);
-  font-size: 15px;
+  font-size: 24px;
   letter-spacing: 0.35px;
   background: rgba(17,17,19,0.55);
   color: var(--text);
@@ -177,8 +177,8 @@ a{ color: var(--accent); }
   cursor:not-allowed;
 }
 .btn.primary{
-  background: linear-gradient(180deg, var(--primary), rgba(195,106,45,0.75));
-  border-color: rgba(250,208,44,0.25);
+  background: linear-gradient(180deg, var(--primary), rgb(255 69 220 / 75%));
+    border-color: rgb(255 58 251 / 25%);
 }
 
 .pill{
