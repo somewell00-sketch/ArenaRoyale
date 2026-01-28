@@ -116,7 +116,7 @@ a{ color: var(--accent); }
 .minimap{
   position:absolute;
   left: 12px;
-  bottom: 12px;
+  bottom: 64px;
   width: 200px;
   height: 200px;
   border-radius: 14px;
