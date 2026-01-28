@@ -906,6 +906,13 @@ function spawnEnterRewardsIfNeeded(world, area, { seed, day }){
   const isVeg = vegetation.includes(biome);
   const isWater = (biome === "lake" || biome === "swamp");
 
+  // Distance scaling (subtle): farther areas get slightly better / more loot.
+  // Area ids: 24 (near) .. 72 (far). Values outside clamp.
+  const MIN_AREA = 24;
+  const MAX_AREA = 72;
+  const distRaw = (Math.max(MIN_AREA, Math.min(MAX_AREA, area.id)) - MIN_AREA) / (MAX_AREA - MIN_AREA);
+  const dist = Math.sqrt(Math.max(0, Math.min(1, distRaw)));
+
   if(prng(seed, day, `spawn_food_${area.id}`) < (isVeg ? 0.40 : isWater ? 0.40 : 0.12)){
     let pick = "wild_fruits";
     if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
@@ -921,32 +928,48 @@ function spawnEnterRewardsIfNeeded(world, area, { seed, day }){
     area.groundItems.push({ defId: "backpack", qty: 1, meta: { seedTag: `bp_enter_${area.id}_${day}` } });
   }
 
-  // Healing / medical items (subtle scaling with distance)
-  const healChance = 0.02 + 0.06 * t; // 2% perto -> 8% longe
+  // Extra ground items: farther areas have a higher chance to have 2–3 total spawned items (excluding whatever was already on the ground).
+  // We keep this finite and subtle to avoid loot inflation.
+  const spawnedBefore = area.groundItems.length;
 
-  if(prng(seed, day, `spawn_heal_${area.id}`) < healChance){
-    // Weighted pick: survival kit mais comum que first aid
-    const r = prng(seed+123, day, `spawn_heal_pick_${area.id}`);
-    let pick = "survival_kit";
-    if(r < 0.20) pick = "first_aid_backpack";
-    else if(r < 0.55) pick = "survival_kit";
-    else pick = "flask";
+  // Roll for +1 item and then (rarer) +1 again.
+  const chanceSecond = 0.15 + 0.35 * dist; // 15% -> 50%
+  const chanceThird  = 0.02 + 0.13 * dist; // 2%  -> 15%
 
-    area.groundItems.push({ defId: pick, qty: 1, meta: { spawned:true } });
-  }
+  let extraRolls = 0;
+  if(prng(seed, day, `spawn_extra1_${area.id}`) < chanceSecond) extraRolls++;
+  if(extraRolls === 1 && prng(seed+1337, day, `spawn_extra2_${area.id}`) < chanceThird) extraRolls++;
 
-    // Extra ground item roll (very subtle)
-  const extraChance = 0.10 + 0.20 * t; // 10% perto -> 30% longe
+  // Hard cap: at most 3 items spawned by this function per area-entry trigger.
+  // (Backpack counts as an item if it spawned here.)
+  const cap = 3;
+  const alreadySpawned = area.groundItems.length - spawnedBefore;
+  const room = Math.max(0, cap - alreadySpawned);
+  extraRolls = Math.min(extraRolls, room);
 
-  if(prng(seed, day, `spawn_extra_${area.id}`) < extraChance){
-    // Pode ser comida extra OU um stimulant (não é cura direta, mas ajuda)
+  for(let i = 0; i < extraRolls; i++){
+    const r = prng(seed + 777 + i, day, `spawn_extra_pick_${area.id}_${i}`);
+
+    // Healing chance increases with distance, but remains rare.
+    const healP = 0.02 + 0.08 * dist; // 2% -> 10%
+    const stimP = 0.06 + 0.06 * dist; // 6% -> 12%
+
     let pick = "wild_fruits";
-    if(isWater) pick = "freshwater_fish";
-    if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
 
-    // Pequena chance de stimulant no extra roll
-    if(prng(seed+777, day, `spawn_extra_stim_${area.id}`) < (0.10 + 0.10 * t)){
+    if(r < healP){
+      // Weighted heal pick.
+      const rh = prng(seed + 888 + i, day, `spawn_heal_pick_${area.id}_${i}`);
+      if(rh < 0.20) pick = "first_aid_backpack";
+      else if(rh < 0.65) pick = "survival_kit";
+      else pick = "flask";
+    } else if(r < healP + stimP){
       pick = "stimulant";
+    } else {
+      // Mostly food/water.
+      if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
+      if(isWater) pick = "freshwater_fish";
+      // Rare ration on extras too (tiny).
+      if(prng(seed+991+i, day, `spawn_ration2_${area.id}_${i}`) < (0.02 + 0.03 * dist)) pick = "capital_ration";
     }
 
     area.groundItems.push({ defId: pick, qty: 1, meta: { spawned:true } });

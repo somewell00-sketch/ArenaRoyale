@@ -1049,6 +1049,21 @@ function renderGame(){
       case "MINE_HIT": {
         return "You triggered a hidden trap.";
       }
+      case "HOSTILE_EVENT": {
+        return "Hostile activity injured you.";
+      }
+      case "LASER": {
+        return "A targeting beam hit you.";
+      }
+      case "HAZARD_TICK": {
+        const t = String(e?.hazardType || "").trim();
+        if(t === "heat") return "The heat injured you.";
+        if(t === "cold") return "Extreme cold injured you.";
+        if(t === "toxic") return "Toxic fumes injured you.";
+        if(t === "unstable_ground") return "Unstable ground injured you.";
+        if(t === "flooded") return "Rising water injured you.";
+        return "A hazard injured you.";
+      }
       case "POISON_TICK": {
         // Already covered in formatEvents, but keep the requested short feedback without duplicating.
         return "";
