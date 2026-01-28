@@ -920,6 +920,37 @@ function spawnEnterRewardsIfNeeded(world, area, { seed, day }){
   if(prng(seed, day, `spawn_backpack_${area.id}`) < bpChance){
     area.groundItems.push({ defId: "backpack", qty: 1, meta: { seedTag: `bp_enter_${area.id}_${day}` } });
   }
+
+  // Healing / medical items (subtle scaling with distance)
+  const healChance = 0.02 + 0.06 * t; // 2% perto -> 8% longe
+
+  if(prng(seed, day, `spawn_heal_${area.id}`) < healChance){
+    // Weighted pick: survival kit mais comum que first aid
+    const r = prng(seed+123, day, `spawn_heal_pick_${area.id}`);
+    let pick = "survival_kit";
+    if(r < 0.20) pick = "first_aid_backpack";
+    else if(r < 0.55) pick = "survival_kit";
+    else pick = "flask";
+
+    area.groundItems.push({ defId: pick, qty: 1, meta: { spawned:true } });
+  }
+
+    // Extra ground item roll (very subtle)
+  const extraChance = 0.10 + 0.20 * t; // 10% perto -> 30% longe
+
+  if(prng(seed, day, `spawn_extra_${area.id}`) < extraChance){
+    // Pode ser comida extra OU um stimulant (não é cura direta, mas ajuda)
+    let pick = "wild_fruits";
+    if(isWater) pick = "freshwater_fish";
+    if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
+
+    // Pequena chance de stimulant no extra roll
+    if(prng(seed+777, day, `spawn_extra_stim_${area.id}`) < (0.10 + 0.10 * t)){
+      pick = "stimulant";
+    }
+
+    area.groundItems.push({ defId: pick, qty: 1, meta: { spawned:true } });
+  }
 }
 
 function applyDailyThreats(world, events, { seed, day }){
