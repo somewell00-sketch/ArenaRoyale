@@ -840,7 +840,7 @@ function renderGame(){
           </div>
           <div class="actionBar" id="exploreActionBar">
           <div class="row">
-            <button id="btnEndDay" class="btn green" style="width:100%; padding:12px 14px;">End Day</button>
+            <button id="btnEndDay" class="btn green" style="width:100%; padding:12px 14px;">😴 End Day</button>
           </div>
           <div class="muted small" style="margin-top:8px;">Moves left today: <span id="movesLeft2"></span></div>
           </div>
