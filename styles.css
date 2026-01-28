@@ -329,7 +329,7 @@ textarea{
 /* Palette-styled range input */
 .hSlider{
   width: 100%;
-  accent-color: var(--primary);
+  accent-color: #FFFFFF;
 }
 
 .hSlider:focus{ outline: none; }
@@ -338,7 +338,7 @@ textarea{
 .hSlider::-webkit-slider-runnable-track{
   height: 10px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(195,45,180,0.9), rgba(190,130,255,0.7));
+  background: linear-gradient(90deg, rgba(80,0,180,0.6), rgba(150,70,255,0.9));
   border: 1px solid rgba(250,208,44,0.18);
 }
 
