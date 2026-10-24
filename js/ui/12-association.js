@@ -79,7 +79,7 @@ function renderAssociation(){
   const kidsLeg = new Map(); HUNTERS.forEach(x => { if(x.hParent) kidsLeg.set(x.hParent, (kidsLeg.get(x.hParent) || 0) + 1); });
   const fam = h => { if(famT.has(h.license)) return famT.get(h.license);
     const t = {wed: !!((h.spouse && hLic(h.spouse)) || (h.widowOf && hLic(h.widowOf))), par: !!(h.hParent && hLic(h.hParent)), kid: kidsLeg.has(h.license), kin: false};
-    lineage(h.license, h.cid).forEach(x => { if(!x.h) return; if(/^(father|mother|parent)$/.test(x.rel)) t.par = true; else if(/^(son|daughter|child)$/.test(x.rel)) t.kid = true; else t.kin = true; });
+    lineage(h.license, h.cid).forEach(x => { if(!x.h || x.step) return; if(/^(father|mother|parent)$/.test(x.rel)) t.par = true; else if(/^(son|daughter|child)$/.test(x.rel)) t.kid = true; else t.kin = true; });
     ((h.keep && h.keep.fam && h.keep.fam.kin) || []).forEach(x => { if(byCid.has(x.id)) t.kin = true; });
     famT.set(h.license, t); return t; };
   const RLS = WORLD.relics || {}, holdsR = h => RELICS.some(d => RLS[d.id] && (RLS[d.id].st === 'held' || RLS[d.id].st === 'missing') && (RLS[d.id].holder === h.license || RLS[d.id].holder2 === h.license));

@@ -71,14 +71,22 @@ function lineage(lic, cid){
     .concat(HUNTERS.filter(x => x.hParent === l && !H.some(k => k.cid === x.cid)).map(x => ({lic: x.license, kid: null})));
   const uniq = arr => { const m = new Map(); arr.forEach(p => { const k = key(p); if(k && !m.has(k)) m.set(k, p); }); return [...m.values()]; };
   [me].forEach(p => seen.add(key(p))); if(me.kid) seen.add(me.kid.id); if(me.lic) seen.add(me.lic);
-  const add = (p, rel) => { const k = key(p); if(!k || seen.has(k) || (p.kid && seen.has(p.kid.id))) return; seen.add(k); if(p.kid) seen.add(p.kid.id); if(p.lic) seen.add(p.lic);
-    const h = p.lic && hLic(p.lic), gd = (h && h.gender) || (p.kid && p.kid.gender); out.push(p.kid ? {rel: rel(gd), k: p.kid, h: h || null} : {rel: rel(gd), h}); };
+  const add = (p, rel, step) => { const k = key(p); if(!k || seen.has(k) || (p.kid && seen.has(p.kid.id))) return false; seen.add(k); if(p.kid) seen.add(p.kid.id); if(p.lic) seen.add(p.lic);
+    const h = p.lic && hLic(p.lic), gd = (h && h.gender) || (p.kid && p.kid.gender); out.push(Object.assign(p.kid ? {rel: rel(gd), k: p.kid, h: h || null} : {rel: rel(gd), h}, step ? {step: true} : {})); return true; };
+  // step ties run through a marriage that lasted: to the end, or still going; a divorce or a new marriage ends them on both sides, so the tree does not fill up over the centuries
+  const wed = (a, b) => a && b && ((a.spouse === b.license && (b.spouse === a.license || (!b.spouse && b.widowOf === a.license))) || (b.spouse === a.license && !a.spouse && a.widowOf === b.license));
+  const spouses = l => { const h = l && hLic(l); if(!h) return []; return [h.spouse, !h.spouse && h.widowOf].filter(x => x && wed(h, hLic(x))).map(ofLic).filter(Boolean); };
   const P = parents(me), PL = P.map(p => p.lic);
   P.forEach(p => add(p, x => g(x, 'father', 'mother', 'parent')));
+  const SP = uniq(P.flatMap(p => spouses(p.lic))).filter(s => !PL.includes(s.lic)).filter(p => add(p, x => g(x, 'stepfather', 'stepmother', 'step-parent'), 1));
   const GP = uniq(P.flatMap(parents)); GP.forEach(p => add(p, x => g(x, 'grandfather', 'grandmother', 'grandparent')));
-  uniq(GP.flatMap(p => children(p.lic))).filter(p => !PL.includes(p.lic) && !P.some(q => q.kid && p.kid && q.kid.id === p.kid.id)).forEach(p => add(p, x => g(x, 'uncle', 'aunt', "parent's sibling")));
-  uniq(P.flatMap(p => children(p.lic))).forEach(s => { const sp = parents(s).map(q => q.lic), full = sp.length === PL.length && PL.every(l => sp.includes(l)); add(s, x => (full ? '' : 'half-') + g(x, 'brother', 'sister', 'sibling')); });
+  const AU = uniq(GP.flatMap(p => children(p.lic))).filter(p => !PL.includes(p.lic) && !P.some(q => q.kid && p.kid && q.kid.id === p.kid.id)).filter(p => add(p, x => g(x, 'uncle', 'aunt', "parent's sibling")));
+  const SIB = uniq(P.flatMap(p => children(p.lic))).filter(s => { const sp = parents(s).map(q => q.lic), full = sp.length === PL.length && PL.every(l => sp.includes(l)); return add(s, x => (full ? '' : 'half-') + g(x, 'brother', 'sister', 'sibling')); });
+  uniq(SP.flatMap(p => children(p.lic))).forEach(p => add(p, x => g(x, 'stepbrother', 'stepsister', 'step-sibling'), 1));
+  uniq(AU.flatMap(p => children(p.lic))).forEach(p => add(p, () => 'cousin'));
+  uniq(SIB.flatMap(p => children(p.lic))).forEach(p => add(p, x => g(x, 'nephew', 'niece', "sibling's child")));
   const K = uniq(children(me.lic)); K.forEach(p => add(p, x => g(x, 'son', 'daughter', 'child')));
+  uniq(spouses(me.lic).flatMap(p => children(p.lic))).forEach(p => add(p, x => g(x, 'stepson', 'stepdaughter', 'stepchild'), 1));
   uniq(K.flatMap(p => children(p.lic))).forEach(p => add(p, x => g(x, 'grandson', 'granddaughter', 'grandchild')));
   return out;
 }
@@ -104,7 +112,7 @@ function lineageHtml(lic, cid, pre){
         if(k.entered && k.fate && k.fate.st === 'Deceased') return `died in the ${ordinal(k.entered)} exam, at ${k.entered - k.born}`;
         if(k.entered) return `${ED - k.entered >= 3 ? `took the ${ordinal(k.entered)} exam · chose another life` : `did not pass the ${ordinal(k.entered)} exam`}${age}`;
         return k.never ? `chose another life${age}` : a > 80 ? `born after the ${ordinal(k.born)} exam` : age.slice(3); })();
-    return `<div${!h && !c ? ' class="fam-civ"' : ''}><span style="color:var(--gold)">✦</span> ${link} <span class="muted">— ${esc(r.rel)} · ${st}</span></div>`; };
+    return `<div${!h && !c ? ' class="fam-civ"' : r.step ? ' class="fam-step"' : ''}><span style="color:var(--gold)">✦</span> ${link} <span class="muted">— ${esc(r.rel)} · ${st}</span></div>`; };
   return `<div><div class="section-h">Family</div><div class="grs">${pre || ''}${L.map(row).join('')}</div></div>`;
 }
 function familyHtml(c){ const LP = legendKnown(c) && hLic(c.hParent) ? (() => { const H = hLic(c.hParent); return `<div><div class="section-h">Family</div><div class="grs"><div><span style="color:var(--gold)">✦</span> <a data-hunter="${esc(H.license)}">${esc(H.name)}</a> <span class="muted">— parent · ${H.status === 'Active Hunter' ? 'Hunter' : esc((H.status || '').toLowerCase())} · licensed in the ${ordinal(H.edition)}${hStars(H) ? ' · ' + starStr(hStars(H)) : ''}</span></div></div></div>`; })() : '';

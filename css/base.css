@@ -766,6 +766,7 @@ td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
 @media (max-width:640px){.hq-l{width:100%}}
 /* relatives who never became Hunters sit a step back */
 .fam-civ{opacity:.62}
+.fam-step{opacity:.8}
 .fam-civ .fam-civ-n{font-weight:400;color:var(--muted)}
 .fam-civ > span:first-child{color:var(--muted)!important}
 .ha-regh{margin-top:8px}
