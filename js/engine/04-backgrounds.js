@@ -49,7 +49,7 @@ function backgroundBefore(S, ph, p, rng, active){
     if(BG.origin[b.origin][1].includes(ph.id)){ c.pmod = (c.pmod || 0) + 1.5; hits.home.push(c); }
   });
   const P = thePhase(ph.name), PC = P.charAt(0).toUpperCase() + P.slice(1);
-  const one = arr => arr.length ? arr[Math.floor(rng() * arr.length)] : null;
+  const one = arr => typeof castBias === 'function' ? castBias(S, arr, rng, 0.4) : arr.length ? arr[Math.floor(rng() * arr.length)] : null;   // the camp leans toward the cast
   const f = one(hits.fear), t = one(hits.talent), o = rng() < 0.5 ? one(hits.home) : null;
   if(f) dlog(S, p, 'story', vpick(S, [x => `${x.c.name} has been afraid of ${x.w} since childhood. ${x.PC} is a nightmare.`, x => `${x.c.name}'s fear of ${x.w} makes ${x.P} twice as hard.`, x => `${x.c.first} goes pale at the start of ${x.P}. ${x.w.charAt(0).toUpperCase() + x.w.slice(1)}. Of course it had to be ${/^being /.test(x.w) ? 'this' : x.w}.`], f.id)({c: f, w: BG.fear[f.bg.fear][0], P, PC}), [f.id], 4);
   if(t) dlog(S, p, 'story', vpick(S, [x => `${x.c.name} ${x.w}, and in ${x.P} it shows.`, x => `${x.PC} might as well have been designed for ${x.c.name}, who ${x.w}.`], t.id)({c: t, w: pro(BG.talent[t.bg.talent][0], t), P, PC}), [t.id], 3);

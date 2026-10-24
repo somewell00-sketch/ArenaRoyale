@@ -312,12 +312,18 @@ function setupBonds(S){
     const ms = A.members.map(id => cmap(S)[id]).filter(Boolean);
     for(let i = 0; i < ms.length; i++) for(let j = i + 1; j < ms.length; j++){
       const a = ms[i], b = ms[j];
-      if(bonded(a, b) || nhash([a.id, b.id].sort().join('') + 'fb') % 2) continue;
+      if(bonded(a, b) || nhash([a.id, b.id].sort().join('') + 'fb') % 6) continue;   // one pair of relatives in six starts out inseparable
       makeBond(S, 0, a, b, true);
       dlog(S, 0, 'bond', vpick(S, T_BOND_FAM, a.id + b.id)({a, b, f: A.name}), [a.id, b.id], 4);
       if(shown++ > 3) S.log[S.log.length - 1].d = true;
     }
   });
+}
+// a bond hardens over the exam: rare after the first trials, most likely on the way to Zevil Island
+function bondRamp(p){
+  let zi = PHASES.findIndex(x => x.zevil); if(zi < 0) zi = PHASES.length - 1;
+  const t = Math.min(1, Math.max(0, p / Math.max(1, zi - 1)));
+  return 0.05 + 1.1 * t * t * t;
 }
 // allies close in age may bond after facing a phase together
 function bondsAfter(S, ph, p, rng){
@@ -330,7 +336,7 @@ function bondsAfter(S, ph, p, rng){
       const since = Math.max((A.joined || {})[a.id] ?? A.formed ?? 0, (A.joined || {})[b.id] ?? A.formed ?? 0);
       if(p - since < 2) continue;                                         // a bond needs time: at least two phases side by side
       if((a.bonds || []).filter(x => !x.fam).length >= 2 || (b.bonds || []).filter(x => !x.fam).length >= 2) continue;
-      if(rng() < bondChance(a, b) && makeBond(S, p, a, b)) dlog(S, p, 'bond', vpick(S, T_BOND, a.id + b.id)({a, b}), [a.id, b.id], 7);
+      if(rng() < bondChance(a, b) * bondRamp(p) && makeBond(S, p, a, b)) dlog(S, p, 'bond', vpick(S, T_BOND, a.id + b.id)({a, b}), [a.id, b.id], 7);
     }
   });
   // a bonded partner falls: the one left behind fights for both
@@ -553,7 +559,7 @@ function traitMoments(S, ph, p, rng, active){
   if(ph.final || active.length < 3) return;
   const n = rng() < 0.5 ? 1 : 2;
   for(let i = 0; i < n; i++){
-    const c = active[Math.floor(rng() * active.length)];
+    const c = typeof castBias === 'function' ? castBias(S, active.filter(x => x.status === 'Active'), rng, 0.4) : active[Math.floor(rng() * active.length)];
     if(!c || c.status !== 'Active') continue;
     persona(c);
     const lines = TRAIT_LINES[c.trait]; if(!lines) continue;

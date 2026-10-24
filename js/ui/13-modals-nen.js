@@ -262,6 +262,22 @@ function familyLine(c){
   }
   return t;
 }
+const LEAD_NUM = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+function storyLead(c){
+  const A = (c.attempts || []).filter(x => x.status === 'Completed' && x.edition < S.edition), n = attemptsOf(c);
+  // a long road: five tries or more
+  if(n >= 5 && A.length){
+    const best = A.slice().sort((x, y) => (y.stage || 0) - (x.stage || 0) || (y.phase || 0) - (x.phase || 0))[0];
+    const fails = n - 1, fw = String(fails < LEAD_NUM.length ? LEAD_NUM[fails] : fails);
+    return `This is attempt ${n} for ${c.first}. ${fw.charAt(0).toUpperCase() + fw.slice(1)} exams have ended without a license${best && best.phaseName ? `, the closest ${/Island$/.test(best.phaseName) ? 'on' : 'in the'} ${best.phaseName}, in the ${ordinal(best.edition)}` : ''}.`;
+  }
+  // a score to settle, and the other one is here too
+  const m = cmap(S), g = (c.grudges || []).find(g => g.ed === S.edition - 1 && m[g.id] && m[g.id].status === 'Active' && /^(\w+ed|took|stole|beat|left|cost|broke|threw|sold|hit|ran|gave|made|won|caught|fought|lied|tore|swore|shot|cut|struck|knocked|led|let|kept|sent|told|stood|spat|bit)\b/.test(g.why || ''));   // a past deed only: "took Rumi's own badge", not "trains at the rival school"
+  if(g) return `Last year, ${g.name} ${g.why.replace(/(\w+)'s own /, "$1's ")}. Both are back.`;
+  // sent by a school
+  if(c.dojo && c.dojo.name) return `${c.first} was sent to the exam by ${c.dojo.name}.`;
+  return '';
+}
 function storyOf(c){
   persona(c); const b = background(c);
   const h = k => nhash(c.id + ':' + k), pk = (arr, k) => arr[h(k) % arr.length];
@@ -269,8 +285,10 @@ function storyOf(c){
   const nick = c.nick ? ` — "${c.nick}" —` : '';
   if(legendKnown(c) && hLic(c.hParent)){ const H = hLic(c.hParent); parts.push(`${c.first || c.name} is the child of ${H.name}, and the whole exam knows it now.`); }
   if(c.heir){ const P = c.heir.parents.map(hLic).filter(Boolean); if(P.length) parts.push(`${c.first || c.name} is the child of Hunter${P.length > 1 ? 's' : ''} ${P.map(h => h.name).join(' and ')}, and has heard about the exam at every dinner {they} can remember.`); }
+  // the strongest fact about this candidate opens the story, before the portrait
+  const lead = storyLead(c); if(lead) parts.push(lead);
   parts.push(pk([
-    `${c.name}${nick} is a ${c.age}-year-old ${traitNoun(c.trait)}: ${traitDesc(c.trait)}.`,
+    `${c.name}${nick} is ${/^(8|11|18|8\d)$/.test(String(c.age)) ? 'an' : 'a'} ${c.age}-year-old ${traitNoun(c.trait)}: ${traitDesc(c.trait)}.`,
     `${c.name}${c.nick ? `, known as "${c.nick}",` : ''} is ${c.age} and ${aN(traitNoun(c.trait))} through and through: ${traitDesc(c.trait)}.`
   ], 's1'));
   const famT = c.fam || (c.family && c.family.type && attemptsOf(c) === 1) ? familyLine(c) : '';
@@ -310,7 +328,13 @@ function grudgesHtml(c){
     const link = h ? `<a data-hunter="${esc(h.license)}">${esc(g.name)}</a> <span class="xtag sm sp">Hunter</span>` : o ? `<a data-id="${o.id}">${esc(g.name)}</a>` : `<span class="fam-civ-n">${esc(g.name)}</span>`;
     const st = h ? ` · ${h.status === 'Active Hunter' ? 'Hunter' : esc(h.status)}${hStars(h) ? ' · ' + starStr(hStars(h)) : ''}` : o ? '' : w ? ' (now on the Blacklist)' : ' (did not come back)';
     return `<div${gone ? ' class="fam-civ"' : ''}>${link} <span class="muted">— ${esc(g.why)}${st}</span></div>`; };
-  return `<div><div class="section-h">Grudges</div><div class="grs">${show.map(row).join('')}${faded ? `<p class="muted" style="margin:4px 0 0;font-size:12px">${faded} older grudge${faded === 1 ? '' : 's'} faded with time.</p>` : ''}</div></div>`;
+  // the same grievance against several people reads as one line ("took Rumi's own badge on Zevil Island" four times becomes one row with four names)
+  const byWhy = new Map(); show.forEach(g => { const k = g.why || ''; byWhy.set(k, (byWhy.get(k) || []).concat([g])); });
+  const many = gs => { const names = gs.map(g => { const {o, h} = who(g); return h ? `<a data-hunter="${esc(h.license)}">${esc(g.name)}</a>` : o ? `<a data-id="${o.id}">${esc(g.name)}</a>` : `<span class="fam-civ-n">${esc(g.name)}</span>`; });
+    const nH = gs.filter(g => who(g).h).length;
+    return `<div>${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} <span class="muted">— ${esc(gs[0].why)}${nH ? ` · ${nH === gs.length ? 'all' : nH} Hunter${nH === 1 ? '' : 's'} now` : ''}</span></div>`; };
+  const rows = [...byWhy.values()].map(gs => gs.length > 1 && gs[0].why ? many(gs) : gs.map(row).join(''));
+  return `<div><div class="section-h">Grudges</div><div class="grs">${rows.join('')}${faded ? `<p class="muted" style="margin:4px 0 0;font-size:12px">${faded} older grudge${faded === 1 ? '' : 's'} faded with time.</p>` : ''}</div></div>`;
 }
 function bondsHtml(c){
   const B = c.bonds || []; if(!B.length) return '';

@@ -433,7 +433,7 @@ function personalNicks(S, ph, p, rng, active){
   if(ph.final || rng() > 0.55) return;
   const pool = active.filter(c => !c.nick); if(!pool.length) return;
   const strong = pool.slice().sort((x, y) => total(y) - total(x)).slice(0, Math.max(3, Math.ceil(pool.length * 0.2))), src = rng() < 0.65 ? strong : pool;   // names stick to the ones people watch
-  const c = src[Math.floor(rng() * src.length)], pn = personalNick(S, c);
+  const c = typeof castBias === 'function' ? castBias(S, pool, rng, 0.35) || src[Math.floor(rng() * src.length)] : src[Math.floor(rng() * src.length)], pn = personalNick(S, c);
   if(pn) giveNick(S, c, 'personal', pn[1], p, undefined, pn[0]);
 }
 const T_LEAD = [

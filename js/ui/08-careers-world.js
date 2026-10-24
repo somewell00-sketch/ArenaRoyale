@@ -673,6 +673,50 @@ LIFE.push(
   '{n} learned three new languages on the road.',
   '{n} got a tattoo in {pl} to mark ten years of the license.'
 );
+// more small lives, so a long world does not keep telling the same few
+LIFE.push(
+  '{n} spent a winter as a lighthouse keeper on a rock off {pl}, and came back talking to gulls.',
+  '{n} rebuilt a collapsed bridge in {pl} with {their} own hands, mostly out of spite.',
+  '{n} lost a whole season to a board game tournament in {pl}, and won it.',
+  '{n} was mistaken for a famous actor in {pl} and played along for a week.',
+  '{n} grew a garden on the roof of an inn in {pl}. The innkeeper still waters it.',
+  '{n} took a vow of silence for a month. Nobody noticed for the first two weeks.',
+  '{n} carved a chess set out of beast bone and refuses to play with it.',
+  '{n} judged a beauty contest for pigs in {pl}. {They} take{s} it very seriously.',
+  '{n} spent the off-season copying old maps in a monastery near {pl}.',
+  '{n} taught a village in {pl} to swim after the river flooded.',
+  '{n} got lost on purpose in {pl} for a month, to see if {they} still could.',
+  '{n} was banned from every casino in {pl}. {They} only played once.',
+  '{n} delivered a baby on a stalled train outside {pl}.',
+  '{n} wrote an opera about the Hunter Exam. The examiners hated it.',
+  '{n} adopted a retired racing bird with a terrible temper.',
+  '{n} spent the year apprenticed to a blacksmith in {pl}, just to learn something with {their} hands.',
+  '{n} ran a noodle stall in {pl} for a summer, under a false name.',
+  '{n} climbed the tallest peak near {pl} alone, then took the cable car down.',
+  '{n} returned a library book borrowed before the exam. The fine was enormous.',
+  '{n} found {their} childhood home in {pl} turned into a museum of something else entirely.',
+  '{n} trained a pack of street dogs in {pl} into something close to an army.',
+  '{n} lost a duel of riddles to a child in {pl}, and is still thinking about it.',
+  '{n} spent a season guarding a vineyard in {pl}. The wine was worth it.',
+  '{n} broke {their} own record for days without sleep, and does not recommend it.',
+  '{n} was knighted by a very small kingdom near {pl} for reasons nobody can explain.',
+  '{n} kept a diary of every beast {they} met that year. It is mostly drawings of teeth.',
+  '{n} spent a month teaching basic Ten to orphans in {pl}, very carefully.',
+  '{n} went back to the exam site as a tourist, and got lost in the same place as before.'
+);
+// marriages and children have their own story in the world; the generic lines would contradict it
+for(let i = LIFE.length - 1; i >= 0; i--) if(/became a parent|got married/.test(LIFE[i])) LIFE.splice(i, 1);
+// some lives are ordinary, some should happen to almost nobody: the rare ones are drawn less often, and once told they rest for forty years
+const LIFE_RARE = /lighthouse|Heavens Arena|royal council|fortune|memoir|field guide|local legend|knighted|opera|tattoo|museum|army|delivered a baby|banned from every casino/;
+function lifePick(h){
+  const ed = S.edition, rest = WORLD.lifeRest = WORLD.lifeRest || {}, mine = h.lifeU = h.lifeU || [];
+  const pool = LIFE.map((t, i) => [t, i]).filter(([t, i]) => !mine.includes(i) && !(LIFE_RARE.test(t) && rest[i] > ed - 40));
+  if(!pool.length) return null;
+  const [t, i] = wpickM(pool, ([t]) => LIFE_RARE.test(t) ? 0.3 : 1);
+  mine.push(i); if(mine.length > 12) mine.shift();
+  if(LIFE_RARE.test(t)) rest[i] = ed;
+  return t;
+}
 const toBase = t => t.replace(/^(brought|tracked|collected|dragged|caught|ended|captured|took|cleared|arrested|talked|recovered|opened|found|solved|outbid|dug|catalogued|calmed|saved|tamed|raised|stopped|discovered|led|was|studied|returned|cooked|won|invented|exposed|rescued|tasted|mapped|deciphered|proved|restored|escaped|charted|dove|sank|sailed|contained|isolated|got|traced|quarantined|spent|vaccinated|reunited|went|cracked|bought|struck|broke|sold|played|composed|recorded|discovered|recruited|negotiated|hunted|scouted|ran|settled|convinced|trained)\b/, w => BASEV[w] || w);
 const BASEV = {trained:'train',brought:'bring',tracked:'track',collected:'collect',dragged:'drag',caught:'catch',ended:'end',captured:'capture',took:'take',cleared:'clear',arrested:'arrest',talked:'talk',recovered:'recover',opened:'open',found:'find',solved:'solve',outbid:'outbid',dug:'dig',catalogued:'catalogue',calmed:'calm',saved:'save',tamed:'tame',raised:'raise',stopped:'stop',discovered:'discover',led:'lead',was:'be',studied:'study',returned:'return',cooked:'cook',won:'win',invented:'invent',exposed:'expose',rescued:'rescue',tasted:'taste',mapped:'map',deciphered:'decipher',proved:'prove',restored:'restore',escaped:'escape',charted:'chart',dove:'dive',sank:'sink',sailed:'sail',contained:'contain',isolated:'isolate',got:'get',traced:'trace',quarantined:'quarantine',spent:'spend',vaccinated:'vaccinate',reunited:'reunite',went:'go',cracked:'crack',bought:'buy',struck:'strike',broke:'break',sold:'sell',played:'play',composed:'compose',recorded:'record',recruited:'recruit',negotiated:'negotiate',hunted:'hunt',scouted:'scout',ran:'run',settled:'settle',convinced:'convince'};
 const fillH = (t, h, x) => pro(t.replace(/\{n\}/g, h.name).replace(/\{pl\}/g, () => plText((x && x.pl) || pickR(PLACES))).replace(/\{o\}/g, (x && x.o) || '').replace(/\{h\}/g, (x && x.h) || 'their ability').replace(/\{age\}/g, (x && x.age) || '').replace(/\{st\}/g, (x && x.st) || '').replace(/\{c\}/g, (x && x.c) || 'Hunter').replace(/\{nth\}/g, (x && x.nth) || '').replace(/\{job\}/g, (x && x.job) || ''), h);
@@ -915,7 +959,7 @@ function worldEnd(prev, ed, add, items, W){
   act.forEach(h => (h.bonds || []).forEach(b => {
     const o = byCid[b.id], k = [h.cid, b.id].sort().join(); if(!o || seen.has(k)) return; seen.add(k);
     if(hActive(o)){
-      if(Math.random() < 0.25) add(h, 'bond', pickR([`${h.name} and ${o.name} take on a job in ${pickR(PLACES)} together, as they always do.`, `${h.name} crosses a continent to help ${o.name} with a contract nobody else would take.`, `${h.name} and ${o.name} are seen together in ${pickR(PLACES)}. The partnership from the exam is still going.`]), 4, o);
+      if(Math.random() < 0.25) add(h, 'bond', pickR([`${h.name} and ${o.name} take on a job in ${pickR(PLACES)} together, as they always do.`, `${h.name} crosses a continent to help ${o.name} with a contract nobody else would take.`, `${h.name} drops everything when ${o.name} sends word from ${pickR(PLACES)}.`, `${h.name} and ${o.name} split a reward in ${pickR(PLACES)} down to the last coin, as they swore they would.`, `${h.name} spends a week patching up ${o.name} after a job in ${pickR(PLACES)} went wrong.`, `${o.name} names ${h.name} as the one person to call if ${PR(o).they} ever go${PR(o).es} missing.`, `${h.name} and ${o.name} meet in ${pickR(PLACES)} once a year, on the anniversary of the exam.`, `${h.name} and ${o.name} are seen together in ${pickR(PLACES)}. The partnership from the exam is still going.`]), 4, o);
       else if(Math.random() < 0.06) add(h, 'bond', `${h.name} pulls ${o.name} out of a collapsing ruin in ${pickR(PLACES)}. Some debts from the exam never stop being repaid.`, 6, o);
     }
   }));

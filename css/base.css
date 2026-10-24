@@ -818,3 +818,16 @@ a.golink.sm{font-size:12.5px}
 .rl .rl-ic{margin-bottom:4px}
 .rl.rl-lost .rl-ic,.rl.rl-outlaw .rl-ic,.rl.rl-sealed .rl-ic,.rl.rl-missing .rl-ic{stroke:var(--muted)}
 .rl-pop-ic{width:84px;height:84px;padding:8px;border:1px solid var(--line);border-radius:10px}
+
+/* Herald: Zodiac seats filled in one year */
+.bn-zod{display:grid;gap:3px;margin-top:6px}
+.bn-zrow{display:grid;grid-template-columns:78px 1fr;gap:8px;align-items:baseline}
+.bn-zrow small{color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-size:10.5px}
+
+/* closing card of the exam: what became of the ones to watch */
+.cast-end{margin-top:18px}
+.ce-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px}
+.ce-row{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding:8px 10px;border:1px solid var(--line);background:var(--panel2,rgba(255,255,255,.02))}
+.ce-row > span{margin-left:auto;font-size:12px;color:var(--muted)}
+.ce-row.ok > span{color:var(--gold)}
+.ce-row.dead > span{color:var(--red,#e0624a)}

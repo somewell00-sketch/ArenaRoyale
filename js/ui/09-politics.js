@@ -291,7 +291,7 @@ function politicsCore(ed, add, items){
       if(cq){ quit = true; qwhy = cq; }
       else if(WORLD.stay[z] === cur.license){ quit = true; qwhy = pickR(['keeps the promise of one more year, and not a day longer', 'gave the Chairman the extra year and now walks away']); delete WORLD.stay[z]; }
       else if(purge.has(z)){ quit = true; qwhy = pickR([`is replaced as the new Chairman reshapes the Zodiac`, `loses the seat in the new Chairman's first reshuffle`, `is thanked for ${PR(cur).their} service and let go by the new Chairman`]); }
-      else if(tenure >= 1 && Math.random() < Math.min(0.9, 0.24 + tenure * 0.01 + Math.max(0, effAge(cur, age) - 65) * 0.01)){   // a desk job: 25% after the first year, +1% each year after
+      else if(tenure >= 1 && Math.random() < Math.min(0.9, 0.19 + tenure * 0.01 + Math.max(0, effAge(cur, age) - 65) * 0.01)){   // a desk job: 20% after the first year, +1% each year after
         if(Math.random() < 0.25){ WORLD.stay[z] = cur.license; add(cur, 'zodiac', `${cur.name} asks to leave the ${z} seat. Chairman ${ch.name} asks for one more year, and ${cur.name.split(' ')[0]} agrees.`, 5); return; }
         quit = true;
         const R = [[`steps down after ${tenure} year${tenure === 1 ? '' : 's'}, saying ${PR(cur).they} ${PR(cur).are} tired`, tenure >= 6 ? 3 : 0.5], [`retires from the Zodiac at ${age}`, age >= 60 ? 4 : 0], [`resigns after a public clash with Chairman ${ch.name}`, (ch.rivals || []).includes(cur.cid) ? 5 : 1], [`resigns as a scandal breaks around ${PR(cur).their} last mission`, 0.6], [`gives up the seat to go back to the field`, 2], [`leaves to take care of ${PR(cur).their} family`, 1], [`resigns in protest at the last election`, (WORLD.elections || []).some(e => e.ed >= ed - 2) ? 1.5 : 0], [`steps down, saying the work is elsewhere`, 1]];
@@ -477,7 +477,7 @@ function hunterYear(prev){
     // a year off the field: suspensions and injuries cost the missions
     if(Math.random() < 0.015 * relScandal(h)){ if(scandalCase(h, ed, add)) return; add(h, 'scandal', fillH(pickR(SCANDAL), h), 5); h.rp = Math.max(0, h.rp - 20); return; }
     if(!relNoInj(h) && Math.random() < 0.04){ add(h, 'fail', fillH(pickR(['{n} spent most of the year recovering from injuries taken in {pl}.','{n} was badly hurt in {pl} and missed the whole season.','{n} lost an eye in {pl}, and came back sharper.']), h), 3); h.rp += 3; return; }
-    if(Math.random() < 0.14) add(h, 'life', fillH(pickR(LIFE), h), 2);
+    if(Math.random() < 0.14){ const t = lifePick(h); if(t) add(h, 'life', fillH(t, h), 2); }
     if(Math.random() < 0.06 * relNen(h) && h.nen && h.nen.hatsu && h.nen.hatsu.name) add(h, 'nen', fillH(pickR(NEN_EV).replace(/\{tech\}/g, pickR(['Ko', 'Ken', 'Ryu', 'En', 'Gyo', 'Shu', 'In'])).replace(/\{cat\}/g, h.nen.category), h, {h: h.nen.hatsu.alias || h.nen.hatsu.name}), 3);
     const missions = Math.max(1, relMissions(h) + (busy.has(h.license) ? 1 : hot ? 2 + (Math.random() < 0.4 ? 1 : 0) : Math.random() < 0.45 ? 2 : 1));
     if(hot && Math.random() < 0.12) add(h, 'crisis', fillH(pickR(W.crisis.hero), h, {pl: WORLD.crisis.pl2 && Math.random() < 0.4 ? WORLD.crisis.pl2 : WORLD.crisis.pl}), 5);
@@ -684,12 +684,16 @@ function bulletinHtml(b){
   // a Hunter who turns up alive is good news, not a loss
   const lost = take(it => ['death', 'missing', 'avenge'].includes(it.kind) && !(hLic(it.lic) && hActive(hLic(it.lic)))).sort(byRank);
   const promo = take(it => it.kind === 'promo').sort(byRank);
-  const lives = take(it => !BRIEF.includes(it.kind)).sort(byRank).slice(0, 10);
-  const brief = take(it => BRIEF.includes(it.kind)).sort(byRank);
+  // two stories from the same mould: the same closing line ("Neither remembers what the fight was about."), or the same sentence with other names
+  const mould = t => { const ss = String(t).match(/[^.!?]+[.!?]+["”]?/g) || [String(t)]; return (ss.length > 1 ? ss[ss.length - 1] : ss[0]).replace(/[A-Z][\w'’-]+(?: [A-Z][\w'’-]+)*/g, 'N').replace(/\d+/g, '#').trim(); };
+  const seenM = new Set(), dupes = new Set();
+  const lives = take(it => !BRIEF.includes(it.kind)).sort(byRank).filter(it => { const k = mould(it.text); if(seenM.has(k)){ dupes.add(it); used.delete(it); return false; } seenM.add(k); return true; }).slice(0, 10);
+  const brief = take(it => BRIEF.includes(it.kind) || dupes.has(it)).sort(byRank);   // a second story from the same mould goes to the brief
   // losses read as a running list: who, age and rank, what happened, and (when there is one) the office they held
   const obit = it => { const h = hLic(it.lic), ms = mourn.filter(m => m.o.lic === it.lic);
     const role = h ? (h.starCup === 'champion' ? `Centennial Star of the ${ordinal(h.edition)}` : (() => { const pr = (h.pastRoles || []).slice().sort((a, b) => (b.to || 0) - (a.to || 0))[0], cur = roleOf(h); return cur ? roleFull(h) : pr ? `former ${pr.r === 'Chairman' || pr.r === 'Vice-Chairman' ? pr.r : pr.r + ' of the Zodiac'}` : ''; })()) : '';
     let body = it.text.startsWith(it.name + ' ') ? it.text.slice(it.name.length + 1) : it.text;
+    if(it.name && body.startsWith(it.name)) body = it.name.split(' ')[0] + body.slice(it.name.length);   // "Darius Azoulay's remains…" → "Darius's remains…"
     const facts = h && it.kind !== 'missing' ? [hunterAge(h), starStr(hStars(h))].filter(Boolean).join(' · ') : '';   // age only for the dead
     return `<div class="bl ${it.kind}"><i>${it.kind === 'missing' ? '?' : '✝'}</i><span><b>${it.lic ? `<a data-hunter="${esc(it.lic)}">${esc(it.name)}</a>` : esc(it.name)}</b>${facts ? ` <small class="bn-f">${esc(facts)}</small>` : ''}${role ? ` <small class="bn-role">${esc(role.charAt(0).toUpperCase() + role.slice(1))}</small>` : ''} <span class="bn-more">— ${esc(body)}</span>${ms.map(m => ` <span class="bn-mourn">${linkHunter(m)}</span>`).join('')}</span></div>`; };
   const prom = it => { const h = hLic(it.lic), st = h ? hStars(h) : 0;
@@ -697,13 +701,24 @@ function bulletinHtml(b){
   return `<div class="bn">
     ${EL ? electionHtml(EL) : ''}
     ${lead ? `<div class="bn-lead ${lead.kind}"><i>${ic[lead.kind] || '·'}</i><div>${split(lead)}</div></div>` : ''}
-    ${sec('The Association', assoc)}
+    ${sec('The Association', assoc, zodiacFold(assoc, row))}
     ${sec('The world', world, worldShown.map(row).join('') + (crisisMore.length ? `<details class="bn-brief"><summary>${crisisMore.length} more reports from the crisis</summary><div class="bulletin">${crisisMore.map(row).join('')}</div></details>` : ''))}
     ${sec(lost.some(it => it.kind === 'missing') ? 'Lost and missing' : 'Losses', lost, lost.map(obit).join(''))}
     ${sec('Promotions', promo, `<div class="bn-promos">${promo.filter(it => (hLic(it.lic) ? hStars(hLic(it.lic)) : 1) >= 2).map(prom).join('')}</div>${promo.some(it => (hLic(it.lic) ? hStars(hLic(it.lic)) : 1) < 2) ? `<div class="bn-firsts">${promo.filter(it => (hLic(it.lic) ? hStars(hLic(it.lic)) : 1) < 2).map(prom).join('')}</div>` : ''}`)}
     ${sec('Lives and careers', lives)}
     ${brief.length ? `<details class="bn-brief"><summary>In brief · ${brief.length} more ${brief.length === 1 ? 'story' : 'stories'}</summary><div class="bulletin">${brief.map(row).join('')}</div></details>` : ''}
   </div>`;
+}
+// several Zodiac seats changing in one year read as one block: the sign, who comes in, who leaves and why
+function zodiacFold(assoc, row){
+  const re = /^Zodiac, the (\w+): (.+?) ((?:steps down|gives up|resigns|retires|dies|goes missing|leaves|keeps|gave|is replaced|loses|is thanked|was killed)[^;]*); Chairman (.+?) names (.+?) in .+?'s place\.$/;
+  const Z = assoc.filter(it => it.kind === 'zodiac' && re.test(it.text));
+  if(Z.length < 2) return assoc.map(row).join('');
+  const ch = Z[0].text.match(re)[4], lk = n => { const h = HUNTERS.find(x => x.name === n); return h ? `<a data-hunter="${esc(h.license)}">${esc(n)}</a>` : esc(n); };
+  const rows = Z.map(it => { const m = it.text.match(re); return `<div class="bn-zrow"><small>${esc(m[1])}</small><span>${lk(m[5])} <span class="bn-more">in place of ${lk(m[2])}, who ${esc(m[3])}</span></span></div>`; }).join('');
+  const block = `<div class="bl zodiac"><i>${(typeof CAREER_IC !== 'undefined' && CAREER_IC.zodiac) || '·'}</i><span>Chairman ${lk(ch)} fills ${Z.length} seats of the Zodiac.<div class="bn-zod">${rows}</div></span></div>`;
+  let out = '', put = false; assoc.forEach(it => { if(Z.includes(it)){ if(!put){ out += block; put = true; } } else out += row(it); });
+  return out;
 }
 // the Herald's election special: who won, by how much, how long it took, and the council that came out of it
 function electionHtml(E){

@@ -594,7 +594,7 @@ function storyLine(S, text, ids){
   M[k] = S.edition;
   const one = (text.match(/[.!?](\s|$)/g) || []).length === 1, first = text.split(' ')[0], named = (ids || []).some(id => { const c = S.candidates.find(x => x.id === id); return c && text.startsWith(c.first || c.name); });
   const r = (h >>> 8) % 100;
-  if(r < 26 && one && !ST_STATE.test(text) && !/^(At|Before|After|By|During|In|On|When|While|Halfway|Somewhere|From|Last|This|Every|Nobody|Everyone|Someone|Two|Three)\b/.test(text) && !/:/.test(text.slice(0, 30)))
+  if(r < 26 && one && !ST_STATE.test(text) && !/^(At|Before|After|By|During|In|On|When|While|Halfway|Somewhere|From|Last|This|Every|Nobody|Everyone|Someone|Two|Three|Meanwhile)\b/.test(text) && !/:/.test(text.slice(0, 30)))
     return `${ST_OPEN[(h >>> 4) % ST_OPEN.length]} ${named || /^[A-Z][a-z]+ [A-Z]/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1)}`;
   if(r >= 26 && r < 42 && one && named && !ST_STATE.test(text) && !ST_GRIM.test(text)) return `${text} ${ST_TAIL[(h >>> 4) % ST_TAIL.length]}`;
   return text;

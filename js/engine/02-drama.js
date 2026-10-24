@@ -573,7 +573,8 @@ function setPieces(S, ph, p, rng, active){
   if(!bank) return;
   const r = rng(), k = 2 + (r < 0.55 ? 1 : 0) + (r < 0.2 ? 1 : 0) + (THEME === 'storm' ? 1 : 0) - themed;
   let done = 0;
-  if((S.castNow || []).length) for(const e of rng.shuffle(bank.slice()).slice(0, 8)){ S._castOnly = true; let ok = false; try { ok = runSetPiece(S, ph, p, rng, active.filter(c => c.status === 'Active'), e, used); } finally { S._castOnly = false; } if(ok){ done++; break; } }
+  { const want = (S.castNow || []).length >= 4 ? 2 : (S.castNow || []).length ? 1 : 0; let got = 0;   // two scenes a trial go to the cast (one when it is small); they count toward the usual number
+    if(want) for(const e of rng.shuffle(bank.slice()).slice(0, 10)){ S._castOnly = true; let ok = false; try { ok = runSetPiece(S, ph, p, rng, active.filter(c => c.status === 'Active'), e, used); } finally { S._castOnly = false; } if(ok){ done++; if(++got >= want) break; } } }
   for(const e of rng.shuffle(bank.slice())){
     if(done >= k) break;
     if(runSetPiece(S, ph, p, rng, active.filter(c => c.status === 'Active'), e, used)) done++;

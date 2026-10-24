@@ -372,6 +372,7 @@ function renderBracket(){
   const outWhy = c => clean(c.reason || '').replace(/^Final Tournament: /, '').replace(/^lost the last match of the bracket and was the only finalist left without a win$/, 'Lost the last match: the one finalist who does not pass');
   const outcome = `<div class="outcome">
     <div class="ofull"><div class="section-h">New Hunters · ${passed.length}</div><div class="cards">${passed.map(lic).join('') || '<span class="muted">No one has passed yet.</span>'}</div></div>
+    ${S.finished ? castEndHtml() : ''}
     </div>`;   // who lost, died or was disqualified is already in the bracket above
   el.innerHTML = `<div class="rep-head"><div><h2>Final Tournament</h2>${phTests(PHASES[FINAL_P])}${PHASES[FINAL_P].ex ? `<div class="exline">${exChip(PHASES[FINAL_P].ex)}</div>` : ''}</div>
 </div>
@@ -552,6 +553,7 @@ function renderPhase0(){
   if(PHASES[i].final){ renderBracket(); return; }
   if(PHASES[i].zevil && S.zevil && S.zevil.days.length){ renderZevil(st); return; }
   const ph = PHASES[i];
+  castoutClean();
   const ev = S.log.filter(e => e.p === i);
   const allies = ev.filter(e => ['ally','betray','help','split','family'].includes(e.type));
   const teams = ev.filter(e => e.type === 'team');
@@ -583,9 +585,12 @@ function renderPhase0(){
   const vetHtml = arr => {
     const groups = {}, cm = cmap(S);
     arr.forEach(e => { const c = cm[e.ids[0]], k = c && e.text.startsWith(c.name) ? e.text.slice(c.name.length) : null; if(k) (groups[k] = groups[k] || []).push(c); });
-    const big = Object.entries(groups).filter(([, g]) => g.length >= 3);
+    const big = Object.entries(groups).filter(([, g]) => g.length >= 2);
     const rest = arr.filter(e => !big.some(([k, g]) => g.some(c => c.id === e.ids[0]) && e.text.endsWith(k)));
-    const folded = big.map(([k, g]) => `<div class="story"><div class="ev veteran"><span class="txt">${g.length} veterans${k.replace(/^ has /, ' have ').replace(/ knows /, ' know ').replace(/ remembers /, ' remember ')}</span><div class="who" style="margin-top:6px;font-size:13px">${nameLinks(g)}</div></div></div>`).join('');
+    const plural = k => k.replace(/^ has /, ' have ').replace(/ knows /, ' know ').replace(/ remembers /, ' remember ').replace(/ guides /, ' guide ');
+    const folded = big.map(([k, g]) => g.length === 2   // two names read as one sentence; three or more get a count and the list
+      ? `<div class="story"><div class="ev veteran"><span class="txt"><a data-id="${g[0].id}">${esc(g[0].name)}</a> and <a data-id="${g[1].id}">${esc(g[1].name)}</a>${esc(plural(k))}</span></div></div>`
+      : `<div class="story"><div class="ev veteran"><span class="txt">${g.length} veterans${plural(k)}</span><div class="who" style="margin-top:6px;font-size:13px">${nameLinks(g)}</div></div></div>`).join('');
     return folded + story(rest, rest.length > 6, true);
   };
   // routine alliance news only names people worth following: strong or returning candidates, favourites, nicknames, future Hunters, bonds and secrets
@@ -645,7 +650,8 @@ function renderPhase0(){
   const groups = {};
   outs.forEach(c => {
     let k = clean(c.reason).replace(/^[^:]+:\s*/, '').replace(/\s*\(team \d+\)/, '').replace(/; out of time.*$/, '').replace(/, missing the cut by a hair$/, '')
-      .replace(/\b[A-Z][\w-]+(?: [A-Z][\w'’-]+)+['’]s\b/g, "a teammate's").replace(/\b(by|with|to|from|against) [A-Z][\w-]+(?: [A-Z][\w'’-]+)+\b/g, '$1 a rival');
+      .replace(/\b[A-Z][\w-]+(?: [A-Z][\w'’-]+)+['’]s\b/g, "a teammate's").replace(/\b(by|with|to|from|against) [A-Z][\w-]+(?: [A-Z][\w'’-]+)+\b/g, '$1 a rival')
+      .replace(/\b(herself|himself)\b/g, 'themselves').replace(/\b(her|his)\b/g, 'their');   // one row per cause, not one per pronoun
     if(ph.prisoner) k = 'Lost both prisoner challenges';
     if(c.status === 'Deceased') return;   // the dead have their own list ("Lost in this trial")
     if(c.status === 'Disqualified'){ (groups['Disqualified for killing'] = groups['Disqualified for killing'] || []).push(c); return; }
@@ -669,10 +675,17 @@ function renderPhase0(){
           const all = key.concat(eliteR), flav = all.filter(e => e.type === 'story'), bonds = all.filter(e => e.type === 'bond');
           const hi = all.filter(e => !flav.includes(e) && !bonds.includes(e)); { const tn = THEMES[S.theme || 'classic'], op = e => isOpening(e) || (tn && e.text.startsWith(tn.name + ':')); let at = 0; while(at < hi.length && op(hi[at])) at++; at = Math.max(1, at);
             const j = hi.findIndex(e => e.type === 'heir'); if(j > at) hi.splice(at, 0, hi.splice(j, 1)[0]);
-            const co = hi.filter(e => e.type === 'castout'); co.forEach(e => hi.splice(hi.indexOf(e), 1)); hi.splice(at, 0, ...co); }   // the cast's falls come right after the opening   // an heir sits right after the trial's own opening line
+            const co = hi.filter(e => e.type === 'castout'); co.forEach(e => hi.splice(hi.indexOf(e), 1)); hi.splice(at, 0, ...co);
+            if(i > 0){ const cm = cmap(S), cast = new Set((S.castEver || []).filter(x => x.p <= i).map(x => x.id).filter(id => { const c = cm[id]; return c && (c.out == null || c.out >= i); }));
+              const cs = hi.filter(e => e.type !== 'castout' && (e.ids || []).some(id => cast.has(id))).slice(0, 3).filter(e => hi.indexOf(e) >= at + co.length + 3);   // the cast's scenes are seen, not folded away
+              cs.forEach(e => hi.splice(hi.indexOf(e), 1)); hi.splice(at + co.length, 0, ...cs); } }   // the cast's falls come right after the opening   // an heir sits right after the trial's own opening line
           const hf = foldSame(hi), top = hf.slice(0, 5), more = hf.slice(5);
           return sec('What happened', story(top) + (more.length ? `<details class="ally-more"><summary>${more.length} more from this trial</summary>${story(more, more.length > 8, true)}</details>` : ''))
-            + (flav.length ? `<div class="camp"><h4 class="camp-t">Around the camp</h4><p>${flav.map(e => linkNames(trimPh(e.text), e.ids)).join(' ')}</p></div>` : '')
+            + (flav.length ? `<div class="camp"><h4 class="camp-t">Around the camp</h4><p>${(() => {
+              // the trial is named once; after that the camp says "this trial" or "this one"
+              let n = 0; const re = new RegExp(`\\b([Tt])he ${ph.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+              const tame = t => t.replace(re, (m, T) => { if(++n === 1) return m; const alt = n % 2 ? 'this one' : 'this trial'; return T === 'T' ? alt[0].toUpperCase() + alt.slice(1) : alt; });
+              return flav.map(e => linkNames(tame(trimPh(e.text)), e.ids)).join(' '); })()}</p></div>` : '')
             + sec('Bonds &amp; alliances', bondsHtml(bonds, ph.zevil ? [] : allies));
         })()}
         ${ph.zevil ? sec('Island log, day by day', story(ev.filter(e => allies.includes(e) || duels.includes(e)), true)) : ''}
@@ -708,6 +721,7 @@ function renderLog(){
   if(MTI.size && !sel.parentElement.querySelector('#logType option[value="mt"]')) $('logType').add(new Option('◆ Your apprentice', 'mt'), 1);
   // the apprentice's own beat closes each phase they ran, as a line of its own
   const beats = {}; MENTOR.appr.forEach(a => { if(a.trail && a.trail.ed === S.edition && MTI.has(a.id)) a.trail.ph.forEach(x => (beats[x.p] = beats[x.p] || []).push({p: x.p, type: 'mtbeat', text: x.say, ids: [a.id], b: x, nm: a.name})); });
+  castoutClean();
   const LOG = []; S.log.forEach((e, i) => { LOG.push(e); const nx = S.log[i + 1]; if(beats[e.p] && (!nx || nx.p !== e.p)){ LOG.push(...beats[e.p]); delete beats[e.p]; } });
   Object.values(beats).forEach(b => LOG.push(...b));
   const rows = LOG.filter(e => !e.d && !(e.type === 'fav' && isMt(e)) && (e.type !== 'mtbeat' || !t || t === 'mt') && (!t || e.type === t || (t === 'fav' && (e.ids || []).some(isFav)) || (t === 'mt' && isMt(e))) && (p === '' || e.p == p) && (t || logMode === 'all' || !ROUTINE.includes(e.type) || (e.ids || []).some(isFav) || isMt(e))).reverse().slice(0, 400);
@@ -832,10 +846,23 @@ function rulesHtml(){
 
 
 // the cast of this exam, as it stood after this trial: only those still in, kept as short as the standouts
+// the closing card: what became of the ones the first trial introduced, and of those who joined them later
+// older saves wrote a count at the end of the cast's farewell cards ("8 moments this exam."); it is taken out
+function castoutClean(){ (S.log || []).forEach(e => { if(e.type === 'castout' && / \d+ moments this exam\.$/.test(e.text)) e.text = e.text.replace(/ \d+ moments this exam\.$/, ''); }); }
+function castEndHtml(){
+  const m = cmap(S), E = S.castEver || [], first = E.filter(x => x.p === 0).map(x => m[x.id]).filter(Boolean), later = E.filter(x => x.p > 0).map(x => m[x.id]).filter(Boolean);
+  if(!first.length) return '';
+  const fate = c => c.status === 'Approved' ? ['ok', 'Licensed'] : c.out == null ? ['', c.status] : [c.status === 'Deceased' ? 'dead' : '', (() => { const n = PHASES[c.out] ? PHASES[c.out].name : 'exam', isl = /Island$/.test(n); return `${c.status === 'Deceased' ? 'Died' : c.status === 'Disqualified' ? 'Disqualified' : 'Out'} ${isl ? 'on' : 'in the'} ${n}`; })()];
+  const tag = c => c.nick ? `“${c.nick}”` : attemptsOf(c) > 1 ? `attempt ${attemptsOf(c)}` : '';
+  const row = c => { const [k, t] = fate(c); return `<div class="ce-row ${k}"><a data-id="${c.id}">${esc(c.name)}</a>${tag(c) ? ` <small class="muted">${esc(tag(c))}</small>` : ''}<span>${esc(t)}</span></div>`; };
+  const lw = later.filter(c => c.status === 'Approved').length;
+  return `<div class="ofull cast-end"><div class="section-h">Ones to watch · how it ended</div><div class="ce-list">${first.map(row).join('')}</div>
+    ${later.length ? `<p class="muted" style="margin:8px 0 0;font-size:13px">${later.length} more joined them along the way${lw ? `, and ${lw} of them ${lw === 1 ? 'is' : 'are'} Hunters now` : ''}.</p>` : ''}</div>`;
+}
 function castStripHtml(i){
   const m = cmap(S), L = (S.castEver || []).filter(x => x.p <= i).map(x => m[x.id]).filter(c => c && !(c.out != null && c.out <= i && c.status !== 'Approved'));
   if(!L.length) return '';
   // the opening ones in the order the first trial's report shows them (moment first), then each newcomer in the trial they joined
   const tag = c => c.nick ? `“${c.nick}”` : (c.attempts || []).length > 1 ? 'returning' : c.hParent || c.heir ? 'heir' : c.crusher ? 'rookie crusher' : traitNoun(c.trait || '');
-  return `<div><div class="section-h">Ones to watch</div><div class="standouts">${L.slice(0, 8).map(c => `<div><a data-id="${c.id}">${esc(c.name)}</a><span>${esc(tag(c))}</span></div>`).join('')}</div></div>`;
+  return `<div><div class="section-h">Ones to watch</div><div class="standouts">${L.slice(0, 10).map(c => `<div><a data-id="${c.id}">${esc(c.name)}</a><span>${esc(tag(c))}</span></div>`).join('')}</div></div>`;
 }

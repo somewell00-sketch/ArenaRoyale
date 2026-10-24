@@ -17,19 +17,49 @@ function castPhase(S, p, active){
   if(p === 0) return;   // the first cast is drawn after the first trial, from the people it showed (castIntro)
   const M = S.spot = S.spot || {}; Object.keys(M).forEach(k => { M[k] *= 0.85; });
   const live = new Set(active.map(c => c.id)), keep = (S.castNow || []).filter(id => live.has(id));
+  // someone in the cast fell: the person closest to them takes their place, so the story goes on through them
+  { const m0 = cmap(S), fallen = (S.castNow || []).filter(id => !live.has(id)).map(id => m0[id]).filter(Boolean);
+    fallen.forEach(g => { if(keep.length >= CAST_N) return;
+      const ok = o => o && live.has(o.id) && !keep.includes(o.id);
+      const bond = (g.bonds || []).map(x => m0[x.id]).find(ok);
+      const debt = (g.debt && ok(m0[g.debt.to]) && m0[g.debt.to]) || active.find(o => ok(o) && o.debt && o.debt.to === g.id);
+      const rival = (g.grudges || []).map(x => m0[x.id]).find(ok) || active.find(o => ok(o) && (o.grudges || []).some(x => x.id === g.id));
+      const A = g.alliance != null && (S.alliances || []).find(x => x.id === g.alliance), ally = A ? A.members.map(id => m0[id]).filter(ok).sort((a, b) => (M[b.id] || 0) - (M[a.id] || 0))[0] : null;
+      const [h, why] = bond ? [bond, 'bond'] : debt ? [debt, 'debt'] : rival ? [rival, 'rival'] : ally ? [ally, 'ally'] : [];
+      if(!h) return;
+      keep.push(h.id); M[h.id] = Math.max(M[h.id] || 0, 3); h.castHeir = {id: g.id, name: g.name, first: g.first || g.name.split(' ')[0], why, p, ed: S.edition}; if(h.cbk) h.cbk = h.cbk.filter(x => x !== 'heir'); }); }
   const rest = active.filter(c => !keep.includes(c.id) && (M[c.id] || 0) >= 3).sort((a, b) => (M[b.id] || 0) - (M[a.id] || 0));
   const fam = {}, m = cmap(S); keep.forEach(id => { const f = m[id] && m[id].fam; if(f) fam[f] = (fam[f] || 0) + 1; });
   const add = rest.filter(c => { if(!c.fam) return true; if((fam[c.fam] || 0) >= 2) return false; fam[c.fam] = (fam[c.fam] || 0) + 1; return true; });   // no family takes over the cast
   S.castNow = keep.concat(add.slice(0, Math.max(0, CAST_N - keep.length)).map(c => c.id));
+  // on the way to the end, the strongest of those still standing join the cast, so the new Hunters are not strangers at the final
+  const zi = PHASES.findIndex(x => x.zevil), late = zi >= 0 ? p >= zi - 1 : p >= PHASES.length - 3;
+  if(late && PHASES[p - 1]){
+    const pid = PHASES[p - 1].id, top = active.filter(c => !S.castNow.includes(c.id) && c.scores && c.scores[pid] != null).sort((a, b) => b.scores[pid] - a.scores[pid]).slice(0, PHASES[p].final ? 6 : 3);
+    top.forEach(c => { if(S.castNow.length < CAST_N + 4){ S.castNow.push(c.id); M[c.id] = Math.max(M[c.id] || 0, 3); } });
+  }
   S.castEver = S.castEver || [];
   S.castNow.forEach(id => { if(!S.castEver.some(x => x.id === id) && S.castEver.length < 60) S.castEver.push({id, p}); });
+}
+// a pick that leans toward the cast: with chance `share`, someone from the cast who is in the pool; otherwise anyone in it
+function castBias(S, arr, rng, share){
+  if(!arr || !arr.length) return null;
+  const cs = castSet(S), inC = cs.size ? arr.filter(c => cs.has(c.id)) : [];
+  const from = inC.length && rng() < share ? inC : arr;
+  return from[Math.floor(rng() * from.length)];
+}
+// a camp line is written where it fits in the evening, not always at the end
+function castShuffleIn(S, p, rng){
+  const e = S.log[S.log.length - 1], idx = []; S.log.forEach((x, i) => { if(x.p === p && x.type === 'story' && x !== e) idx.push(i); });
+  if(!idx.length) return; const at = idx[Math.floor(rng() * (idx.length + 1))]; if(at == null) return;
+  S.log.pop(); S.log.splice(at, 0, e);
 }
 const castW = c => S_CUR && S_CUR.castNow && S_CUR.castNow.includes(c.id) ? 9 : 1;
 // a scene that remembers: one short aside, at most one of each kind per person per exam
 function castCallback(S, p, rng, ...who){
   const cs = castSet(S); if(!cs.size) return '';
   for(const c of who){
-    if(!c || !cs.has(c.id) || rng() >= 0.3) continue;
+    if(!c || !cs.has(c.id) || rng() >= 0.5) continue;
     const F = c.first || c.name.split(' ')[0], P = PR(c), used = c.cbk = c.cbk || [], m = cmap(S), opts = [];
     if(c.injury && c.injury.p < p) opts.push(['inj', `(${F} is still nursing the ${c.injury.w} from ${thePhase(c.injury.from)}.)`]);
     if(c.debt && m[c.debt.to] && m[c.debt.to].status === 'Active') opts.push(['debt', `(${F} still owes ${m[c.debt.to].first || c.debt.name} for ${thePhase(c.debt.from)}.)`]);
@@ -37,6 +67,9 @@ function castCallback(S, p, rng, ...who){
     const b = (c.bonds || []).map(x => m[x.id]).find(x => x && x.status === 'Active'); if(b) opts.push(['bond', `(${b.first || b.name} is never far from ${F}.)`]);
     if(c.nick) opts.push(['nick', `("${c.nick}", they call ${F} now.)`]);
     if(c.find) opts.push(['find', `(${F} still has ${c.find.w}.)`]);
+    // the one whose place they took: remembered first, once
+    const H = c.castHeir; if(H && H.ed === S.edition && H.p <= p && !used.includes('heir')){ const G = H.first;
+      used.push('heir'); return ' ' + ({bond: `(${F} is fighting for ${G} too, now.)`, debt: `(${F} never got to settle things with ${G}.)`, rival: `(Without ${G} around, ${F} has nobody left to beat but the exam.)`, ally: `(${F} still saves a ration for ${G}, out of habit.)`}[H.why] || ''); }
     const ok = opts.filter(o => !used.includes(o[0])); if(!ok.length) continue;
     const o = ok[Math.floor(rng() * ok.length)]; used.push(o[0]); return ' ' + o[1];
   }
@@ -88,6 +121,7 @@ function castCut(S, c, m){
   if(c.debt && m[c.debt.to] && m[c.debt.to].status === 'Active') o.push(`Meanwhile, ${F} keeps one eye on ${m[c.debt.to].first || c.debt.name}, waiting for a chance to settle what ${P.they} owe${P.s}.`);
   const g = (c.grudges || []).find(x => m[x.id] && m[x.id].status === 'Active'); if(g) o.push(`Meanwhile, ${F} watches ${m[g.id].first || g.name} across the fire and does not blink first.`);
   const b = (c.bonds || []).map(x => m[x.id]).find(x => x && x.status === 'Active'); if(b) o.push(`Meanwhile, ${F} and ${b.first || b.name} split their last ration without a word.`);
+  if(c.castHeir && c.castHeir.ed === S.edition && !(c.cbk || []).includes('heir')) o.push({bond: `Meanwhile, ${F} sits where ${c.castHeir.first} used to sit, and nobody says anything.`, debt: `Meanwhile, ${F} goes over what ${P.they} still owe${P.s} ${c.castHeir.first}, now that it can never be paid.`, rival: `Meanwhile, ${F} finds that beating the exam is less fun without ${c.castHeir.first} to beat.`, ally: `Meanwhile, ${F} keeps ${c.castHeir.first}'s spot in the group open, just in case.`}[c.castHeir.why]);
   if(c.nick) o.push(`Meanwhile, ${F} hears someone call ${P.them} "${c.nick}" and pretends not to like it.`);
   if(c.find) o.push(`Meanwhile, ${F} turns ${c.find.w} over in ${P.their} hands again.`);
   if(c.alliance){ const A = (S.alliances || []).find(x => x.id === c.alliance); if(A && A.name) o.push(`Meanwhile, ${A.name} close ranks around ${F}.`); }
@@ -96,22 +130,22 @@ function castCut(S, c, m){
 function lightEvents(S, ph, p, rng, active){
   if(ph.final || active.length < 6) return;
   const m = cmap(S), cs = castSet(S), at = atPhase(ph.name), ex = ph.ex ? ph.ex.name : 'the examiner';
-  const pick = (pool, not) => { const arr = pool.filter(c => !not.includes(c)); if(!arr.length) return null; const tot = arr.reduce((s, c) => s + (cs.has(c.id) ? 4 : 1), 0); let r = rng() * tot; for(const c of arr){ r -= cs.has(c.id) ? 4 : 1; if(r <= 0) return c; } return arr[arr.length - 1]; };
+  const pick = (pool, not, share) => castBias(S, pool.filter(c => !not.includes(c)), rng, share ?? 0.35);
   const o = (a, b, g) => ({a, b, at, ex, P: PR(a), g: g ? gNames(g) : '', quirk: a.quirk != null ? pro(QUIRKS[a.quirk] || 'hums the same three notes all day', a) : 'hums the same three notes all day'});
   // something found earlier pays off
   active.filter(c => c.find && c.find.p < p && (!c.find.phys || PHYSICAL.has(ph.id))).slice(0, 2).forEach(c => {
     if(rng() >= 0.35) return; const F = FINDS.find(x => x.w === c.find.w) || FINDS[0];
     dlog(S, p, 'event', F.pay({a: c, P: PR(c), from: thePhase(c.find.from)}), [c.id], 5); c.pmod = (c.pmod || 0) + 3; c.notes.push({p, text: `Used ${c.find.w} found in ${thePhase(c.find.from)}`}); delete c.find; });
   // a find or a wander
-  if(rng() < 0.55){ const a = pick(active, []); if(a){
+  if(rng() < 0.65){ const a = pick(active, [], 0.6); if(a){
     if(!a.find && rng() < 0.45){ const F = FINDS[Math.floor(rng() * FINDS.length)]; a.find = {w: F.w, p, from: ph.name, phys: !!F.phys}; const t = F.t(o(a)); dlog(S, p, 'event', t, [a.id], 4); a.notes.push({p, text: t}); }
     else { const b = pick(active, [a]), f = DISCOVER[Math.floor(rng() * DISCOVER.length)], t = f(o(a, b || a)); if(/\$\{o\.b|o\.b\.name/.test(f.toString()) && !b) return; dlog(S, p, 'event', t, b && t.includes(b.name) ? [a.id, b.id] : [a.id], 3); if(/shortcut/.test(t)) a.pmod = (a.pmod || 0) + 3; if(/hot spring/.test(t)) a.fatigue = Math.max(0, (a.fatigue || 0) - 10); } } }
   // a joke at the camp
-  if(rng() < 0.7){ const a = pick(active, []), b = a && pick(active, [a]); if(a && b){ const g = []; for(let i = 0; i < 3; i++){ const x = pick(active, [a, b].concat(g)); if(x) g.push(x); }
+  if(rng() < 0.85){ const a = pick(active, [], 0.65), b = a && pick(active, [a], 0.25); if(a && b){ const g = []; for(let i = 0; i < 3; i++){ const x = pick(active, [a, b].concat(g)); if(x) g.push(x); }
     const t = FUNNY[Math.floor(rng() * FUNNY.length)](o(a, b, g.length >= 2 ? g : [b])), ids = [a.id].concat(t.includes(b.name) ? [b.id] : []).concat(g.filter(x => t.includes(x.name)).map(x => x.id));
-    dlog(S, p, 'story', t, ids, 3); } }
+    dlog(S, p, 'story', t, ids, 3); castShuffleIn(S, p, rng); } }
   // the camp cuts back to someone in the cast
-  if(p > 0 && cs.size && rng() < 0.75){ const c = m[[...cs][Math.floor(rng() * cs.size)]]; if(c && c.status === 'Active'){ const L = castCut(S, c, m), used = c.cut = c.cut || []; const ok = L.filter(t => !used.includes(t.slice(10, 30))); if(ok.length){ const t = ok[Math.floor(rng() * ok.length)]; used.push(t.slice(10, 30)); dlog(S, p, 'story', t, [c.id], 3); } } }
+  if(p > 0 && cs.size && rng() < 0.75){ const c = m[[...cs][Math.floor(rng() * cs.size)]]; if(c && c.status === 'Active'){ const L = castCut(S, c, m), used = c.cut = c.cut || []; const ok = L.filter(t => !used.includes(t.slice(10, 30))); if(ok.length){ const t = ok[Math.floor(rng() * ok.length)]; used.push(t.slice(10, 30)); if(c.castHeir && t.includes(c.castHeir.first)) (c.cbk = c.cbk || []).push('heir'); dlog(S, p, 'story', t, [c.id], 3); castShuffleIn(S, p, rng); } } }
 }
 // when someone in the cast falls, they get a card of their own: how it ended, and what they leave unfinished
 // (two cards a trial at most, for the ones the story followed longest)
@@ -131,7 +165,7 @@ function castFalls(S, ph, p){
     const bond = b && !how.includes(b.name) ? ` ${b.name} goes on without ${P.them}.` : '';
     if(b) ids.push(b.id);
     const tail = left.length ? ` ${P.They} leave${P.s} behind ${andList(left.slice(0, 2))}.` : '';
-    dlog(S, p, 'castout', `${head} ${how.charAt(0).toUpperCase() + how.slice(1)}.${bond}${tail} ${n} moments this exam.`, ids, 8);
+    dlog(S, p, 'castout', `${head} ${how.charAt(0).toUpperCase() + how.slice(1)}.${bond}${tail}`, ids, 8);
   });
 }
 
