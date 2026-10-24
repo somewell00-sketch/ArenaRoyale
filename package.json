@@ -1,0 +1,14 @@
+{
+  "name": "hunter-exam-simulator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A Hunter × Hunter-inspired exam and world simulator that runs in the browser.",
+  "scripts": {
+    "test": "node tests/smoke.test.js && node tests/themed-trials.test.js && node tests/catastrophe.test.js && node tests/family.test.js && node tests/chronicles.test.js",
+    "stats": "node tests/world-stats.js",
+    "build:single": "node tools/build-single.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}
