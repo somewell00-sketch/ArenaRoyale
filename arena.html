@@ -633,7 +633,7 @@ const PROF={"Shadow Panther":"stalker","Mimetic Yeti":"stalker","Glass Lizard":"
   "Howler Monkey":"skittish","Vigilant Vulture":"skittish","Blade Dragonfly":"skittish"};
 const PDATA={
   hunter:{hunt:.3,range:3,blood:2,see:1,t:"Something on a scent",read:"It's following a scent. Yours.",still:.5,flee:.45,night:.06},
-  stalker:{hunt:.25,range:2,blood:1,see:.2,t:"A shape that shouldn't be there",read:"You never heard it coming.",still:.35,flee:.5,night:.07},
+  stalker:{hunt:.18,range:2,blood:1,see:.2,t:"A shape that shouldn't be there",read:"You never heard it coming.",still:.35,flee:.5,night:.07},
   ambusher:{hunt:0,range:0,blood:0,see:.04,t:"Too still. Too quiet",read:"It was waiting here. For anyone.",still:.5,flee:.55,night:0},
   brute:{hunt:0,range:0,blood:0,see:1,t:"Something huge, breathing slow",read:"It doesn't want to move. It wants you to.",still:.85,flee:.2,night:.02},
   skittish:{hunt:.12,range:2,blood:1,see:1,t:"Chittering, restless",read:"All nerves and noise.",still:.75,flee:.25,night:.03,wander:.5}};
@@ -791,7 +791,9 @@ function intention0(){const you=cells[state.you];const nb=you.nb.map(n=>cells[n]
     if(state.flask)return{a:"drink",t:"Your mouth is dry. There's a little left in the flask."};
     const r=bfsTo(state.you,hasWater);
     if(r){const st=cells[r.step];return{a:"go",to:r.step,t:(you.hazard==="heat"?"The heat is cooking you. ":"Your mouth is dry. ")+(r.dist===1?`You can hear water to the ${dirOf(you,st)}.`:`There was water somewhere ${dirOf(you,cells[r.goal])}, past the ${st.name.toLowerCase()}.`)}}}
-  if(beastNb)return{a:"hide",t:`Something big is breathing to the ${dirOf(you,beastNb)}. Keep still.`};
+  if(beastNb){const hp=prof(beastNb.creature).hunt;const away=hp?nb.filter(c=>!c.creature&&!beastNb.nb.includes(c.i)&&c.i!==beastNb.i).sort((a,b)=>a.dc-b.dc)[0]:null;
+    if(away)return{a:"go",to:away.i,t:`Something to the ${dirOf(you,beastNb)} has your scent. Keep moving — ${dirOf(you,away)}.`};
+    return{a:"hide",t:`Something big is breathing to the ${dirOf(you,beastNb)}. Keep still.`}}
   if(you.hazard==="cold"&&state.pi>=1&&!sheltered(you)){if(you.struct)return{a:you.struct==="Safe Cave"?"cave":"shelterIn",t:"Night is coming and the cold with it. Get inside."};const r=bfsTo(state.you,sheltered);if(r)return{a:"go",to:r.step,t:`Night is coming and the cold will be worse. Find cover — ${dirOf(you,cells[r.step])}.`}}
   if(you.closing&&nb.length){const inward=nb.slice().sort((a,b)=>a.dc-b.dc)[0];return{a:"go",to:inward.i,t:`This edge of the arena is dying. Better to drift inward, ${dirOf(you,inward)}.`}}
   if(you.ration)return{a:"ration",t:"A silver parcel, half-buried. Capitol food."};
@@ -815,7 +817,7 @@ function forecast(a,to){if(a&&a.includes(":"))a=a.split(":")[0];const you=cells[
   case"forage":f=scarce?"The Capitol has stripped the arena. You'll find little.":you.biome==="desert"||you.hazard==="heat"?"Little grows here.":you.tags.includes("rich")?"Others have been through. Some leftovers, maybe.":"Something to eat, maybe.";if(state.bleed)f+=" You'll bleed while you dig.";break;
   case"rest":f=state.bleed?"Resting won't close the wound.":sheltered(you)?"Good cover. You'll mend.":you.tags.includes("exposed")?"Out in the open. You'll mend a little, and be seen.":"You'll mend a little.";if(you.closing)f+=" The ground here won't wait.";break;
   case"bandage":f=`The bleeding stops. ${state.band>1?"One roll left after this.":"Your last roll."}`;break;
-  case"hide":f=state.bloodbath?"Flat behind a crate. If no one looks this way.":you.nb.some(n=>cells[n].creature)?"It may pass you by.":you.tags.includes("exposed")?"Hard to hide out here.":"Safe — but the day slips away.";break;
+  case"hide":f=state.bloodbath?"Flat behind a crate. If no one looks this way.":state.hideSpot&&state.hideSpot.i===you.i&&state.hideSpot.n>=1?"Same spot again. It gets harder every time.":you.nb.some(n=>cells[n].creature)?"It may pass you by.":you.tags.includes("exposed")?"Hard to hide out here.":"Safe — but the day slips away.";break;
   case"drinkHere":f=you.water==="murky"?"Thirst gone. The water might turn your stomach.":"Thirst gone, and the flask full.";break;
   case"oasis":f="Clean water. Thirst gone, and the flask full.";break;
   case"cave":f="Out of sight, out of the weather. You'll mend.";break;
@@ -857,8 +859,16 @@ function perform(a,to){if(state.modal||state.dead)return;let arg=null;if(a&&a.in
   case"cave":case"shelterIn":state.hp=Math.min(100,state.hp+(state.bleed?4:20));state.en=Math.min(100,state.en+12);state.sheltered=true;L(a==="cave"?"You crawl into the cave. Dry rock, and quiet.":"You pull the door shut behind you. For a while, the arena is outside.");fx.push(["+ mended","g"],["sheltered","b"]);break;
   case"bandage":M("You bound your own wound.");state.band--;state.bleed=false;state.hp=Math.min(100,state.hp+6);L("You wrap the cut tight. It throbs, but it holds.");fx.push(["bleeding stopped","g"]);break;
   case"hide":if(bb){state.bb.hid=true;if(Math.random()<.7){L("You flatten yourself behind a crate while the bloodbath happens around you. No one looks your way.");fx.push(["unseen","b"])}else{L("Someone sees you behind the crate.");startEncounter(true);return}break}
-  {const b=you.nb.map(n=>cells[n]).find(c=>c.creature);if(b){const to=b.nb.map(n=>cells[n]).find(c=>c.i!==state.you&&!c.closed&&!c.creature);if(to){to.creature=b.creature;b.creature=null;refreshSenses()}L(`You press yourself flat. The ${b.creature?b.creature.n:"thing"} passes, close enough to smell. Then it's gone.`);fx.push(["it passed","b"])}
-    else{state.hiddenNow=true;L(EVENT.on&&EVENT.type==="storm"?"You curl up against the rain and wait it out.":"You stay low for hours. Nothing comes.");fx.push(["unseen","m"])}break}
+  {state.en=Math.max(0,state.en-5);const spot=state.hideSpot&&state.hideSpot.i===you.i?state.hideSpot.n+1:1;state.hideSpot={i:you.i,n:spot};
+    const ok=Math.random()<.9-(spot-1)*.22-(you.tags.includes("exposed")?.25:0)+(sheltered(you)?.12:0)+(state.camo>0?.2:0);
+    const b=you.nb.map(n=>cells[n]).find(c=>c.creature);
+    if(b){const cr=b.creature,keen={hunter:.35,stalker:.3,skittish:.8,brute:.85,ambusher:1}[cr.p]??.7;
+      if(ok&&Math.random()<keen){const to=b.nb.map(n=>cells[n]).find(c=>c.i!==state.you&&!c.closed&&!c.creature);if(to){to.creature=cr;b.creature=null;refreshSenses()}L(`You press yourself flat. The ${cr.n.toLowerCase()} passes, close enough to smell. Then it's gone.`);fx.push(["it passed","b"])}
+      else if(prof(cr).hunt&&state.beastDay!==state.day){b.creature=null;you.creature=cr;cr.close=false;state.beastDay=state.day;L(`You press yourself flat. It doesn't matter. The ${cr.n.toLowerCase()} has your scent.`);refreshSenses();startBeast(you,true);return}
+      else{state.hiddenNow=true;L("You stay low. Something big circles, then loses interest.");fx.push(["unseen","m"])}}
+    else if(ok){state.hiddenNow=true;L(spot>=3?"The same hollow again. It still holds. For now.":EVENT.on&&EVENT.type==="storm"?"You curl up against the rain and wait it out.":"You stay low for hours. Nothing comes.");fx.push(["unseen","m"])}
+    else{state.hiddenNow=false;state.foundOut=true;L(spot>=2?"You've used this spot too often. Someone has noticed.":you.tags.includes("exposed")?"There's nowhere to hide out here. Someone saw you go to ground.":"A twig snaps nearby. You've been seen.");fx.push(["seen","r"])}
+    break}
   case"drinkHere":M(`You found water in the ${you.name.toLowerCase()}.`);state.thirst=0;if(state.flask>=0)state.flask=1;if(you.water==="murky"&&Math.random()<.35){state.poison=2;L("You drink the brown water. An hour later your stomach turns.");fx.push(["+ water","b"],["sick","y"])}else{L("You drink until your stomach aches, then fill the flask.");fx.push(["+ water","b"],["flask full","b"])}break;
   case"oasis":M("You drank at an oasis.");state.thirst=0;if(state.flask>=0)state.flask=1;L("Clean water under the palms. You drink, and drink, and fill the flask.");fx.push(["+ water","b"],["flask full","b"]);break;
   case"fruit":you.picked=true;state.bread+=2;state.en=Math.min(100,state.en+14);L("You climb and eat until the sweetness hurts. Two more for later.");fx.push(["+ food","g"]);break;
@@ -892,7 +902,7 @@ function moveTo(i){state.bloodbath=false;const c=cells[i],from=cells[state.you];
   if(meet){const f=there.find(r=>r.pack)||there[Math.floor(Math.random()*there.length)];startEncounter(false,f);return}
   if(c.ground.some(g=>!g.hidden)&&!c.groundShown)state.pendingGround=c.i;
   advance()}
-function advance(){const you=cells[state.you];
+function advance(){const you=cells[state.you];state.calm=(state.calm||0)+1;
   // body
   const thirstUp=you.water?0:you.hazard==="heat"?1:.35;state.thirst=Math.min(3,state.thirst+thirstUp);state.en=Math.max(0,state.en-6);
   let why=null;const here=you.name.toLowerCase();
@@ -918,6 +928,7 @@ function advance(){const you=cells[state.you];
     if(Math.random()<Math.max(0,Math.min(.95,c))){state.packOffer=true;state.packWhy=b.won?`They saw what you did to ${b.won}.`:b.horn?`They saw you take the ${b.horn} from the horn.`:CAREER_ME?"District "+SETUP.district+". You trained for this.":""}}
   if(state.day===1&&!state.bbDone){state.bbDone=true;bloodbath();const d=state.deaths;state.deaths=[];cannonsFrom(d,"bloodbath")}
   else{npcTurn();const d=state.deaths;state.deaths=[];cannonsFrom(d,"day");const bc=muttsMove();if(bc)state.beastCome=bc.i;
+    if(state.foundOut){state.foundOut=false;const near=npcs().filter(r=>cells[state.you].nb.includes(r.at)).sort((a,b)=>b.aggr-a.aggr)[0];if(near&&near.aggr>.35){(near.pack?npcs().filter(x=>x.pack&&x.at===near.at):[near]).forEach(x=>x.at=state.you);presence()}}
     const v=atCell(state.you);if(v.length&&!hidNow&&Math.random()<(state.camo>0?.3:.7))state.arrival=v.find(r=>r.pack)||v[0]}
   if(state.pi===2){
     // the night itself
@@ -968,7 +979,7 @@ function npcTurn(){const you=state.you;state.deaths=state.deaths||[];
   npcs().filter(r=>!(r.pack&&!late)).forEach(r=>{const c=cells[r.at];let to=null;
     if(c.closing||c.closed||c.burning||c.hazard==="toxic")to=stepToward(r,x=>!x.closing&&!x.closed&&!x.burning&&x.hazard!=="toxic");
     else if(Math.random()<.45-r.caut*.15){const nb=c.nb.filter(n=>{const x=cells[n];return!x.closed&&!x.closing&&!x.burning&&!(x.creature&&r.aggr<.7)});
-      const score=n=>{const x=cells[n];let s=Math.random();if(x.tags.includes("sheltered"))s+=r.caut*.4;if(x.tags.includes("quiet"))s-=.2;if(x.tags.includes("rich")||x.ground.some(g=>!g.hidden))s+=r.greed*.4;if(atCell(n).some(o=>o.pack))s-=r.career?0:.8;if(x.i===corn&&state.day>1)s+=r.greed*.2-r.caut*.3;if(state.day>=4)s+=(1-x.dc/maxd)*(.25+.08*(state.day-4));return s};
+      const score=n=>{const x=cells[n];let s=Math.random();if(x.tags.includes("sheltered"))s+=r.caut*.4;if(x.tags.includes("quiet"))s-=.2;if(x.tags.includes("rich")||x.ground.some(g=>!g.hidden))s+=r.greed*.4;if(atCell(n).some(o=>o.pack))s-=r.career?0:.8;if(x.i===corn&&state.day>1)s+=r.greed*.2-r.caut*.3;if(r.feast&&state.feast&&state.day<=state.feast.until)s+=(1-hops(n,corn,12)/12)*1.2;if(state.day>=4)s+=(1-x.dc/maxd)*(.25+.08*(state.day-4));return s};
       nb.sort((a,b)=>score(b)-score(a));to=nb[0]??null}
     if(to!=null)r.at=to});
   // what happens where they stand
@@ -1000,19 +1011,28 @@ function disposition(f,force){if(force)return"hostile";if(f.know&&f.know.rel==="
   if(f.know&&f.know.rel==="friendly"){o+=.3;h*=.4}const r=Math.random();return r<o?"open":r<o+h?"hostile":"wary"}
 function relLine(f){if(f.ally)return"Your ally";if(f===PARTNER)return"Your district partner";const k=f.know;
   if(k)return`Met on day ${k.day}${k.note?" — "+k.note:""}`;if(f.career&&!CAREER_ME)return"Career";if(f.career)return"Career, like you";return""}
-function startEncounter(career,who,free){let pool=atCell(state.you);if(!pool.length)pool=npcs();if(!pool.length)return advance();if(career&&pool.some(r=>r.career))pool=pool.filter(r=>r.career);const foe=who||pool[Math.floor(Math.random()*pool.length)];foe.at=state.you;
+function startEncounter(career,who,free){state.calm=0;let pool=atCell(state.you);if(!pool.length)pool=npcs();if(!pool.length)return advance();if(career&&pool.some(r=>r.career))pool=pool.filter(r=>r.career);const foe=who||pool[Math.floor(Math.random()*pool.length)];foe.at=state.you;
   const disp=disposition(foe,career);
   const P=pr(foe);const posture=disp==="hostile"?(foe.weapon==="bare hands"?`${P.S} squares up the moment ${P.s} sees you.`:`${P.S} raises ${P.p} ${foe.weapon} the moment ${P.s} sees you.`):disp==="wary"?`${P.S} stops dead, watching your hands.`:foe===PARTNER?`${P.S} lowers ${P.p} ${foe.weapon==="bare hands"?"fists":foe.weapon}. "It's you."`:`${P.S} shows you empty hands. "Easy. I'm not here for you."`;
   const read=[foe.str>.6?"Bigger than you":foe.str<.42?"Smaller than you":"About your size",foe.weapon==="bare hands"?"Unarmed":`Carries a ${foe.weapon}`,foe.hurt?"Limping":foe.career?"Well fed":"Thin, hungry"];
   const group=foe.pack?atCell(state.you).filter(r=>r.pack&&r!==foe):[];if(group.length)read.unshift(`${group.length===1?"One more":group.length+" more"} behind ${pr(foe).o}`);
-  state.modal={k:"enc",foe,disp:group.length&&!CAREER_ME?"hostile":disp,posture,read,group:group.length,free:!!free,rel:relLine(foe),where:cells[state.you].name};rerenderAll()}
-function winChance(f,disp){const m=state.modal;return Math.min(.92,Math.max(.06,1-f.str-(f.wpow||0)-(m&&m.group?.15*m.group:0)+weaponPow()+(SETUP.S-6)*.03+(f.hurt?.15:0)+(disp==="open"?.15:0)+.15*Math.min(2,state.allies.length)))}
+  const here=cells[state.you];const unaware=!free&&!career&&Math.random()<(.15+SETUP.P*.035)*(here.tags.includes("exposed")?.5:1)*(state.camo>0?1.6:1)*(group.length?.5:1);
+  state.modal={k:"enc",foe,disp:group.length&&!CAREER_ME?"hostile":disp,posture:unaware?`${P.S} hasn't seen you. ${P.S}'s crouched over something, back turned.`:posture,read,group:group.length,free:!!free,rel:relLine(foe),where:here.name,unaware};rerenderAll()}
+function winChance(f,disp){const m=state.modal;return Math.min(.92,Math.max(.06,1-f.str-(f.wpow||0)-(m&&m.group?.15*m.group:0)+weaponPow()+(SETUP.S-6)*.03+(f.hurt?.15:0)+(disp==="open"?.15:0)+.15*Math.min(2,state.allies.length)+(m&&m.unaware?.22:0)))}
 function allyChance(f,m){let c=f===PARTNER?.8:(f.career&&CAREER_ME)?.65:(!f.career&&!CAREER_ME)?.45:.15;if(m.disp==="hostile")c*=.2;if(m.disp==="open")c+=.15;if(f.know&&f.know.rel==="friendly")c+=.15;if(state.allies.length>=2)c*=.6;return Math.min(.92,c)}
 function encFore(o,m){const f=m.foe;const mine=state.held?IT[state.held.id].n.split(" ")[0]:"Fists";const theirs=f.weapon==="bare hands"?"fists":f.weapon;
-  if(o==="fight")return`${mine} vs ${theirs}.`+(state.allies.length?` ${state.allies[0].n} with you.`:"");
+  if(o==="fight")return(m.unaware?"Strike first. ":"")+`${mine} vs ${theirs}.`+(state.allies.length?` ${state.allies[0].n} with you.`:"");
   if(o==="talk")return"Guard down.";
   if(o==="ally")return f===PARTNER?"Same district.":"Ask for help.";
-  return"They'll see you go."}
+  return m.unaware?"They'll never know.":f.pack||m.group?"Careers run fast.":"They'll see you go."}
+// running costs something
+// what a beaten tribute leaves behind: their weapon if it beats yours, maybe their pack
+const WID={sword:"sword",spear:"spear",trident:"trident",axe:"axe",bow:"bow",knife:"knife",club:"club","bow and arrows":"bow"};
+function takeSpoils(f){const out={t:"",fx:[]};const id=WID[f.weapon];
+  if(id&&IT[id].pow>weaponPow()+.005){addItem(id);f.weapon="bare hands";f.wpow=-.08;out.t+=` You take ${pr(f).p} ${IT[id].n.toLowerCase()}.`;out.fx.push(["+ "+IT[id].n.toLowerCase(),"g"])}
+  if(Math.random()<.5){const pk=["band","bottle","food","camo","potion"][Math.floor(Math.random()*5)];const got=addItem(pk);out.t+=` In ${pr(f).p} pack: ${got}.`;out.fx.push(["+ "+(IT[pk]?IT[pk].n.toLowerCase():pk),"g"])}
+  return out}
+function dropInRush(){if(Math.random()>.3)return null;if(state.bread>0){state.bread--;return"some food"}const g=state.gear.filter(x=>x!==state.held);if(g.length){const x=g[Math.floor(Math.random()*g.length)];state.gear.splice(state.gear.indexOf(x),1);return"the "+IT[x.id].n.toLowerCase()}return null}
 function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(o);const f=m.foe,P=pr(f),here=cells[state.you].name.toLowerCase();let v,tone,t,fx=[];
   const hurt=(n,bleed,cause)=>{state.hp-=soften(n);if(bleed)state.bleed=true;state.pendingKiller=f;state.pendingCause=cause;allyHarm(.3,`${f.n} turns on ${pr(f).o} next.`)};
   if(o==="ally"){if(Math.random()<allyChance(f,m)){state.allies.push(f);f.ally=true;f.pack=false;f.at=state.you;know(f,"ally","your ally");v=`${f.n} joins you`;tone="green";
@@ -1021,8 +1041,9 @@ function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(
     else{know(f,"neutral","said no to an alliance");v=`${f.n} says no`;tone="amber";t=`"Not today." ${P.S} backs away, watching you until ${P.s}'s gone.`;fx=[["no ally","m"]]}
     L(`${v}. ${t}`);m.res={v,tone,t,fx};return rerenderAll()}
   if(o==="fight"){if(Math.random()<winChance(f,m.disp)){if(state.day===1&&state.pi===0)state.bb.won=f.n;
-      if(Math.random()<.45){kill(f,"Killed by you",cells[state.you].name);state.kills++;state.hp-=8;state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`It's fast and ugly, and then it's over. A cannon, right above you. You take ${P.p} food and don't look back.`;fx=[["− hurt","r"],["+ food","g"]];M(`You killed ${f.n} of District ${f.d}.`)}
-      else{state.hp-=10;state.bread++;know(f,"hostile","you drove them off");v=`${f.n} ran`;tone="green";t=`You land the first blow. ${P.S} breaks and runs, leaving a pack behind.`;fx=[["− hurt","r"],["+ food","g"]];M(`You drove off ${f.n}.`)}}
+      const wc=winChance(f,m.disp),cost=Math.round(16*(1-wc))+2;state.bold=(state.bold||0)+2;state.calm=0;const spoils=takeSpoils(f);
+      if(Math.random()<.6+(f.hurt?.2:0)+(m.unaware?.15:0)){kill(f,"Killed by you",cells[state.you].name);state.kills++;state.hp-=cost;state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`${m.unaware?"They never saw you coming. ":""}It's fast and ugly, and then it's over. A cannon, right above you.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You killed ${f.n} of District ${f.d}.`)}
+      else{state.hp-=cost;state.bread++;know(f,"hostile","you drove them off");v=`${f.n} ran`;tone="green";t=`You land the first blow. ${P.S} breaks and runs, dropping what ${P.s} carried.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You drove off ${f.n}.`)}}
     else{know(f,"hostile","nearly killed you");hurt(24,true,`${f.n} of District ${f.d} found you in the ${here}. The wound never closed.`);v=`${f.n} beat you`;tone="red";t=`The ${f.weapon==="bare hands"?"fists come":f.weapon+" comes"} faster than you thought. You get away, bleeding.`;fx=[["badly hurt","r"],["bleeding","r"]];M(`${f.n} nearly killed you.`)}}
   else if(o==="talk"){const r=Math.random();
     if(m.disp==="hostile"&&r<.8||m.disp==="wary"&&r<.45||m.disp==="open"&&r<.2){
@@ -1031,8 +1052,9 @@ function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(
     else if(m.disp==="open"){know(f,"friendly","shared water");state.thirst=0;const c=cells.find(x=>x.struct&&!x.seen);if(c)c.seen=true;v=`${f.n} was kind`;tone="green";
       t=`${P.S} shares ${P.p} water${c?` and tells you about a ${c.struct.toLowerCase()} in the ${c.name.toLowerCase()}, ${dirOf(cells[state.you],c)} of here`:""}. Then ${P.s}'s gone.`;fx=[["+ water","b"],["+ a tip","m"]];M(`${f.n} shared water with you.`)}
     else{know(f,"neutral","let you be");v=`${f.n} let you be`;tone="amber";t=`A long look. A nod. ${P.S} backs into the ${here} and is gone.`;fx=[["no harm","m"]]}}
-  else{if(m.disp==="hostile"&&Math.random()<.3){know(f,"hostile","chased you");hurt(8,false,`${f.n} of District ${f.d} ran you down in the ${here}.`);v=`${f.n} caught you`;tone="red";t=`You turn to go; ${P.s}'s faster. A blow across the back before you break free.`;fx=[["− hurt","r"]]}
-    else{if(state.prev!=null&&state.prev!==state.you){state.you=state.prev;state.allies.forEach(a=>a.at=state.you);views.forEach(v=>v.resetCam())}else{const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length){state.you=nb[0];views.forEach(v=>v.resetCam())}}v="You got away";tone="amber";t=`You back away the way you came. ${P.S} doesn't follow.`;fx=[["safe","m"]]}}
+  else{const tired=(state.hp<40?.15:0)+(state.en<30?.12:0)-(SETUP.D-6)*.03;const catchP=m.unaware?0:Math.max(0,(f.pack||m.group?.45:m.disp==="hostile"?.35:m.disp==="wary"?.12:0)+(m.disp==="open"?0:tired));
+    if(Math.random()<catchP){know(f,"hostile","chased you");hurt(8,false,`${f.n} of District ${f.d} ran you down in the ${here}.`);v=`${f.n} caught you`;tone="red";t=`You turn to go; ${P.s}'s faster. A blow across the back before you break free.`;fx=[["− hurt","r"]]}
+    else{if(state.prev!=null&&state.prev!==state.you){state.you=state.prev;state.allies.forEach(a=>a.at=state.you);views.forEach(v=>v.resetCam())}else{const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length){state.you=nb[0];views.forEach(v=>v.resetCam())}}v="You got away";tone="amber";t=m.unaware?`${P.S} never even turned around.`:`You back away the way you came. ${P.S} doesn't follow.`;fx=[["safe","m"]];if(!m.unaware){const lost=dropInRush();if(lost){t+=` You lost ${lost} in the rush.`;fx.push(["− "+lost,"r"])}}}}
   L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
 // ---------- creatures (Gamemaker mutts) ----------
 const art=w=>/^[aeiou]/i.test(w)?"an":"a";
@@ -1056,7 +1078,7 @@ function muttsMove(){const you=cells[state.you];let came=null;const tick=state.d
   cells.forEach(c=>{if(!c.creature)return;const cr=c.creature,adj=you.nb.includes(c.i),was=cr.close;cr.close=adj&&!!prof(cr).hunt;
     if(cr.close&&!was){if(beastSeen(c))L(`Something is circling closer, ${dirOf(you,c)} of you.`);else if(cr.p==="stalker"&&Math.random()<.5)L("You feel watched.")}});
   return null}
-function startBeast(c,came){const cr=c.creature;const P=prof(cr);const noticed=came?Math.random()>(state.camo>0?.5:.15):cr.p==="ambusher"?Math.random()<.7:Math.random()>(.3+SETUP.P*.05)*(c.tags.includes("exposed")?.6:1)*(state.camo>0?1.5:1);
+function startBeast(c,came){state.calm=0;const cr=c.creature;const P=prof(cr);const noticed=came?Math.random()>(state.camo>0?.5:.15):cr.p==="ambusher"?Math.random()<.7:Math.random()>(.3+SETUP.P*.05)*(c.tags.includes("exposed")?.6:1)*(state.camo>0?1.5:1);
   const read=[cr.hi>=25?"Bigger than anything should be":cr.hi>=16?"Big, and fast":"Small, but not harmless",cr.mod&&cr.mod[1]==="poison"?"Something wet on its fangs":cr.mod&&cr.mod[1]==="weak"?"It's hurt":cr.mod&&cr.mod[0]==="Blind"?"Its eyes are milk-white":"Made, not born"];
   read.splice(1,0,P.read);
   state.modal={k:"beast",c:c.i,cr,noticed,read,where:c.name,came:came||null};rerenderAll()}
@@ -1072,7 +1094,7 @@ function resolveBeast(o){const m=state.modal,cr=m.cr,c=cells[m.c],nm=beastName(c
       if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);if(nb[0]){state.you=nb[0].i;views.forEach(v=>v.resetCam())}}else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}}
   else if(o==="still"){const P=prof(cr);if(Math.random()<(m.noticed?P.still*.5:Math.max(.75,P.still))){v="It passed you by";tone="green";t=`You don't breathe. The ${cr.n.toLowerCase()} sniffs the air, turns, and is gone into the ${here}.`;fx=[["unseen","b"]];const to=c.nb.map(n=>cells[n]).find(x=>!x.closed&&!x.creature&&x.i!==state.you);if(to){to.creature=cr;c.creature=null}}
     else{bite(.8);v=`The ${cr.n} found you`;tone="red";t="Keeping still was a mistake. It was already looking at you.";fx.unshift(["− hurt","r"])}}
-  else{const P=prof(cr);if(Math.random()<(m.noticed?P.flee*(m.came?.7:1):P.flee*.3)){bite(.5);v="It caught you as you ran";tone="red";t=`Claws across your back, then you're out of the ${here}.`;fx.unshift(["− hurt","r"])}else{v="You got away";tone="amber";t=`You back out the way you came. Behind you, the ${cr.n.toLowerCase()} settles back into the ${here}.`;fx=[["safe","m"]]}
+  else{const P=prof(cr);if(Math.random()<(m.noticed?P.flee*(m.came?.7:1):P.flee*.3)){bite(.5);v="It caught you as you ran";tone="red";t=`Claws across your back, then you're out of the ${here}.`;fx.unshift(["− hurt","r"])}else{v="You got away";tone="amber";t=`You back out the way you came. Behind you, the ${cr.n.toLowerCase()} settles back into the ${here}.`;fx=[["safe","m"]];if(m.noticed){const lost=dropInRush();if(lost){t+=` You lost ${lost} in the rush.`;fx.push(["− "+lost,"r"])}}}
     if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);const to=nb.find(x=>x.i===state.prev)||nb[0];if(to){state.you=to.i;to.seen=true;views.forEach(v=>v.resetCam())}}
     else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}
   refreshSenses();L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
@@ -1090,7 +1112,7 @@ function betrayAlly(name,asleep){const a=state.allies.find(x=>x.n===name);if(!a)
   else{know(a,"hostile","you betrayed them");state.hp-=soften(20);state.bleed=true;state.pendingKiller=a;state.pendingCause=`You turned on ${a.n} of District ${a.d}. ${P.S} was faster.`;v=`${a.n} was ready`;tone="red";t=`${asleep?P.S+" was never really asleep.":P.S+" saw it in your eyes."} The ${a.weapon==="bare hands"?"fists come":a.weapon+" comes"} up before yours does.`;fx=[["badly hurt","r"],["bleeding","r"]];M(`You turned on ${a.n} — and it went wrong.`)}
   others.forEach(o=>{if(o.career||Math.random()<.6){dropAlly(o);know(o,"hostile",`saw you betray ${a.n}`);const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length)o.at=nb[nb.length-1];t+=` ${o.n} saw it all, and leaves without a word.`}});
   L(`${v}. ${t}`);return{v,tone,t,fx}}
-function sponsorCheck(){const sp=state.sp;sp.favor+=(state.day>=2?1:0)+3*Math.max(0,state.kills-sp.lastKills);sp.lastKills=state.kills;
+function sponsorCheck(){const sp=state.sp;sp.favor+=(state.day>=2?1:0)+3*Math.max(0,state.kills-sp.lastKills)+(state.bold||0)-((state.calm||0)>=4?1:0);sp.lastKills=state.kills;state.bold=0;
   const th=6+4*sp.gifts;if(sp.favor<th||Math.random()>=.6)return null;sp.favor-=th;sp.gifts++;
   const gift=state.hp<45?"firstaid":state.en<35?"ration":!state.gear.some(g=>IT[g.id].k==="weapon")?"knife":Math.random()<.5?"stim":"kit";return gift}
 function leaveAlly(name){const a=state.allies.find(x=>x.n===name);if(!a)return;const sus=a.suspicious;dropAlly(a);a.suspicious=sus;know(a,a.suspicious?"neutral":"hostile",a.suspicious?"you left them in the night":"you abandoned them");L(`In the dark you slip away from ${a.n}. You don't look back.`);M(`You left ${a.n} in the night.`);const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length)state.you=nb.find(n=>!cells[n].closing)??nb[0];a.at=cells.findIndex(c=>c===cells[a.at]);if(state.modal&&state.modal.k==="night")state.modal.note=`You slip away from ${a.n} in the dark.`;views.forEach(v=>v.resetCam());rerenderAll()}
@@ -1105,7 +1127,7 @@ function sleep(){const m=state.modal;
   cells.forEach(c=>{if(c.closing){c.closing=false;c.closed=true;c.creature=null;c.people=null}});
   {const quiet=!state.todayDead.length;state.todayDead=[];state.deaths=[];npcs().forEach(r=>{if(cells[r.at].closed)npcDeath(r,"closing")});state.closingList=state.deaths;state.deaths=[];
     if(quiet&&state.day>2){npcs().forEach(r=>r.aggr=Math.min(1,r.aggr+.12));L("A quiet day. The Gamemakers won't allow another.")}}
-  if(state.day>=3&&(state.day-3)%2===0){const nClose=Math.max(4,Math.round(N/12));cells.filter(c=>!c.closed&&!c.closing&&c.i!==corn).sort((a,b)=>b.dc-a.dc).slice(0,nClose).forEach(c=>c.closing=true);
+  if(state.day>=3&&((state.day-3)%2===0||state.alive<=4)){const nClose=Math.max(4,Math.round(N/12));cells.filter(c=>!c.closed&&!c.closing&&c.i!==corn).sort((a,b)=>b.dc-a.dc).slice(0,nClose).forEach(c=>c.closing=true);
     L(`The Gamemakers mark the edge. ${["Four","Five","Six","Seven","Eight","Nine","Ten"][Math.min(6,nClose-4)]} places will be gone by tomorrow.`);state.fx.push(["the arena shrinks","r"])}
   if(EVENT.on&&state.day>EVENT.end)endEvent();else if(EVENT.on&&EVENT.type==="fire")spreadFire();
   // mutts wander at night, new tributes move about
@@ -1131,7 +1153,24 @@ function sleep(){const m=state.modal;
   if(state.betrayed){const a=state.betrayed;state.betrayed=null;if(state.hp<=0){die(state.pendingCause);return rerenderAll()}state.modal={k:"betray",a};rerenderAll();return}
   if(gift){const got=addItem(gift);M(`Sponsors sent you ${got}.`);L(`A silver parachute drifts down at dawn: ${got}.`);state.modal={k:"gift",id:gift,got};rerenderAll();return}
   if(!EVENT.announced&&state.day>=EVENT.start)startEvent();
+  if(!state.modal&&!state.dead&&capitolMoves())return rerenderAll();
   rerenderAll()}
+// the Capitol wants a show: a feast once, and a push for anyone who has been hiding too long
+function capitolMoves(){const you=cells[state.you];
+  if(!state.feast&&state.day>=3&&state.alive>4&&Math.random()<(state.day>=4?1:.5)){state.feast={day:state.day,until:state.day+1};const best=["sword","bow","trident"][Math.floor(Math.random()*3)];
+    cells[corn].ground.push({id:"firstaid",fresh:true},{id:"ration",fresh:true},{id:best,fresh:true});
+    npcs().filter(r=>r.greed>.45||r.career).forEach(r=>r.feast=true);
+    L("The anthem. Then Claudius Templesmith: a feast at the Cornucopia, at dawn. Something for each of you.");M("The Gamemakers announced a feast.");
+    state.modal={k:"broadcast",t:"A feast at the Cornucopia. Something each of you needs badly.",sub:you.i===corn?"You're already here. So is everyone, soon.":`It's ${dirOf(you,cells[corn])} of you. Everyone will be there.`};return true}
+  if(state.calm>=6&&state.day>=2&&!(state.pushDay>=state.day-1)){state.pushDay=state.day;state.calm=2;state.sp.favor=Math.max(0,state.sp.favor-2);
+    const nb=you.nb.map(n=>cells[n]).filter(c=>!c.closed&&!c.creature&&c.i!==corn);const r=Math.random();
+    if(r<.45&&nb.length){const c=nb[Math.floor(Math.random()*nb.length)];const g=CREATURES[B2G[c.biome]||"green"].filter(([n])=>PROF[n]==="hunter");const pick=g.length?g[0]:CREATURES.green[0];c.creature={n:pick[0],lo:pick[1],hi:pick[2],mod:null,p:"hunter",close:true};
+      state.modal={k:"broadcast",t:"The audience is bored.",sub:`Something has been let loose ${dirOf(you,c)} of you. It already has your scent.`}}
+    else{const hunters=npcs().filter(x=>x.aggr>.5||x.career);const h=hunters.sort((a,b)=>(hops(a.at,state.you,12)??99)-(hops(b.at,state.you,12)??99))[0];
+      if(h){const to=nb[0]||you;(h.pack?npcs().filter(x=>x.pack&&x.at===h.at):[h]).forEach(x=>x.at=to.i);presence()}
+      state.modal={k:"broadcast",t:"The audience is bored.",sub:h?`Your face on every screen in the Capitol. ${h.career?"The Careers":h.n} know exactly where you are.`:"Your face on every screen in the Capitol."}}
+    L("The Gamemakers have noticed you've been hiding.");refreshSenses();return true}
+  return false}
 
 // ---------- items (same catalogue as the real game's data/items.json) ----------
 const SV=(p)=>`<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
@@ -1210,9 +1249,9 @@ function joinPack(){const m=state.modal;if(!CAREER_ME)state.weakLink=true;m.who.
 function declinePack(){const m=state.modal;m.who.forEach(r=>know(r,"neutral","you turned down the pack"));L("You turn your back on the Careers. They'll remember.");state.modal=null;rerenderAll()}
 function openGround(mode){state.modal={k:"ground",mode,c:state.you};rerenderAll()}
 function takeGround(i){const m=state.modal,c=cells[m.c];const g=c.ground.filter(x=>!x.hidden)[i];if(!g)return;
-  c.ground.splice(c.ground.indexOf(g),1);const got=addItem(g.id);L(IT[g.id].k==="pack"?`You open the ${IT[g.id].n.toLowerCase()}: ${got}.`:`You take ${got}.`);m.took=(m.took||[]).concat([IT[g.id].k==="pack"?got:IT[g.id].n]);state.fx=[["+ "+IT[g.id].n.toLowerCase(),"g"]];rerenderAll()}
+  c.ground.splice(c.ground.indexOf(g),1);const got=addItem(g.id);if(c.i===corn&&state.feast){state.bold=(state.bold||0)+2;state.calm=0}L(IT[g.id].k==="pack"?`You open the ${IT[g.id].n.toLowerCase()}: ${got}.`:`You take ${got}.`);m.took=(m.took||[]).concat([IT[g.id].k==="pack"?got:IT[g.id].n]);state.fx=[["+ "+IT[g.id].n.toLowerCase(),"g"]];rerenderAll()}
 function closeGround(){const m=state.modal;state.modal=null;cells[m.c].ground.forEach(g=>delete g.fresh);if(m.mode==="forage"){state.fx=m.took&&m.took.length?[]:[["+ strength","g"]];advance()}else rerenderAll()}
-function openLoot(){state.modal={k:"loot",leftovers:!state.bloodbath};rerenderAll()}
+function openLoot(){state.calm=0;state.modal={k:"loot",leftovers:!state.bloodbath};rerenderAll()}
 function others(){["feet","way","horn"].forEach(r=>{state.loot[r]=state.loot[r].filter(()=>Math.random()>.4)})}
 function grabLoot(ring,idx){const m=state.modal;const id=state.loot[ring][idx];if(!id)return;
   const risk=m.leftovers?.22:lootRisk(ring);
@@ -1437,7 +1476,7 @@ function makeView(root,isPhone){
     if(m.k==="enc"){const f=m.foe;const DT={hostile:["Hostile","red"],wary:["Wary","amber"],open:["Open","green"]}[m.disp];
       modal.innerHTML=`<div class="mcard enc">${SIL}<div class="mt">Someone in the ${m.where.toLowerCase()}</div><div class="who">${f.n} <span class="dist">District ${f.d}</span></div>${m.rel?`<div class="relx">${m.rel}</div>`:""}
       ${m.res?`<div class="verdict t-${m.res.tone}">${m.res.v}</div><p class="res">${m.res.t}</p><div class="fxrow">${m.res.fx.map(x=>`<span class="c-${x[1]}">${x[0]}</span>`).join("")}</div><button class="mbtn pri cont">Continue</button>`:
-      `<div class="stance t-${DT[1]}"><b>${DT[0]}</b>${m.posture}</div><div class="read">${m.read.map(r=>`<span>${r}</span>`).join("")}</div>`+
+      `<div class="stance t-${m.unaware?"green":DT[1]}"><b>${m.unaware?"Unaware of you":DT[0]}</b>${m.posture}</div><div class="read">${m.read.map(r=>`<span>${r}</span>`).join("")}</div>`+
       ["fight","talk","ally","slip"].map(o=>`<button class="mbtn ${o==="ally"?"allyb":""}" data-o="${o}">${o==="fight"?"Fight":o==="talk"?"Talk":o==="ally"?"Propose an alliance":"Slip away"}<small>${encFore(o,m)}</small></button>`).join("")}</div>`}
     else if(m.k==="intro"){modal.innerHTML=`<div class="mcard intro"><div class="iimg" style="background-image:url(bg/${ARENA.dom||"arena"}.webp)"></div><div class="mt">The ${state.games||74}th Games</div><div class="aname">${ARENA.name}</div>
       <p class="res">${ARENA.line}</p><p class="res dim">You rise into the light at the Cornucopia. District ${SETUP.district}. ${SETUP.players} of you on the plates.${PARTNER?` Somewhere in the circle: ${PARTNER.n} ${PARTNER.last}, your district partner.`:""}${CAREER_ME?" You trained for this. The Careers will be looking for you.":""}</p><button class="mbtn c pri begin">Step off the plate</button></div>`}

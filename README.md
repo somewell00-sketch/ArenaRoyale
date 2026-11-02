@@ -15,6 +15,7 @@ Open `index.html` (or `arena.html`) with a double-click. No server needed; keep 
 - **Sponsors:** the audience rewards surviving and boldness (kills, betrayals); a silver parachute brings what you need most.
 - **Items:** RPG-style icons; the slot colour tells the type at a glance (weapons red, food and water green, medicine blue, gear amber, packs brown).
 - **Mutts with personalities:** hunters follow your scent and blood, stalkers stay hidden until a good eye spots them, ambushers wait in place, brutes hold their ground, skittish ones raid your food at night. Hunters warn you before they come; any of them may find you at night unless you sleep under cover.
+- **Nerve pays, hiding costs:** hiding tires you and wears out a spot; running can cost you food or gear; catching someone unaware gives you the first strike; beating a tribute means taking their weapon or pack. Hide too long and the Gamemakers send something your way. Once, a feast at the Cornucopia draws everyone in. Sponsors reward boldness. With four or fewer left, the arena closes every night.
 - **Low health:** the screen's edge throbs with your pulse.
 - **Events:** storm, fog, fire or scarcity, announced by the Capitol.
 - **The arena closes:** from day 3, every two days, the outermost areas are marked (four, or more on big maps) and vanish the next day. Anyone still there dies. The Cornucopia never closes.
