@@ -238,6 +238,7 @@ textarea{
 
 .modalOverlay{
   position:fixed;
+  z-index: 1000;
   inset:0;
   background: rgba(0,0,0,0.65);
   display:flex;
@@ -719,8 +720,9 @@ textarea{
   bottom: 0;
   margin-top: 12px;
   padding-top: 10px;
-  background: linear-gradient(180deg, rgba(17,17,19,0.0), rgba(17,17,19,0.88) 22%, rgba(17,17,19,0.92));
+  background: rgb(24,18,18);
   border-top: 1px solid rgba(250,208,44,0.18);
+  z-index: 2;
 }
 
 /* Toasts (top-right of the central map area) */
@@ -764,4 +766,253 @@ textarea{
 .toast.out{
   opacity: 0;
   transform: translateY(-6px);
+}
+
+
+/* ------------------------------------------------------------
+   Map canvas fills its column; the drawing buffer is resized in JS.
+   ------------------------------------------------------------ */
+.app{ grid-template-areas: "you map actions"; }
+#rightPanel{ grid-area: you; }
+.canvasWrap{ grid-area: map; min-width: 0; min-height: 0; }
+#leftPanel{ grid-area: actions; }
+.canvasWrap canvas#c{ width: 100%; height: 100%; }
+
+/* Zoom controls (top-left of the map) */
+.mapZoom{
+  position:absolute;
+  top:12px;
+  left:12px;
+  display:flex;
+  gap:6px;
+  z-index: 8;
+}
+.zoomBtn{
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(250,208,44,0.28);
+  background: rgba(17,17,19,0.80);
+  color: var(--text);
+  font: 600 18px/1 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  cursor: pointer;
+}
+.zoomBtn.wide{ font-size: 13px; }
+.zoomBtn:hover{ background: rgba(40,32,28,0.92); }
+.zoomBtn:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Laptop: shrink side columns a little */
+@media (max-width: 1360px){
+  .app{ grid-template-columns: 220px 1fr 340px; gap: 12px; padding: 12px; }
+  .minimap{ width: 150px; height: 150px; }
+}
+
+/* Tablet: map + actions on top, your panel underneath the map */
+@media (max-width: 1100px){
+  .app{
+    height: auto;
+    min-height: 100vh;
+    grid-template-columns: 1fr 340px;
+    grid-template-areas:
+      "map actions"
+      "you actions";
+    grid-template-rows: 62vh auto;
+  }
+  #leftPanel{ max-height: calc(100vh - 24px); position: sticky; top: 12px; align-self: start; }
+  .hint{ display: none; }
+  .minimap{ width: 120px; height: 120px; bottom: 12px; }
+}
+
+/* Phone: single column — map, then actions, then you */
+@media (max-width: 900px){
+  .app{
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "map" "actions" "you";
+    grid-template-rows: 58vh auto auto;
+    gap: 10px;
+    padding: 10px;
+  }
+  #leftPanel{ position: static; max-height: none; overflow: visible; }
+  #rightPanel{ overflow: visible; }
+  .actionBar{ bottom: 0; margin-left: -14px; margin-right: -14px; padding: 10px 14px; }
+  .minimap{ width: 96px; height: 96px; bottom: 12px; left: 8px; }
+  .btn{ font-size: 18px; }
+  .areaInfo{ width: auto; max-width: 52%; right: 8px; bottom: 8px; padding: 8px 10px; }
+  .toastHost{ left: 8px; right: 8px; top: 54px; align-items: stretch; }
+  .toast{ max-width: none; }
+  .h1{ font-size: 22px; }
+
+}
+
+/* Keep the bottom hint from running under the area card */
+.hint{ max-width: calc(100% - 270px); }
+
+/* Senses: what your tribute perceives around them */
+.senses{
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(10,10,12,0.45);
+  border: 1px solid rgba(250,208,44,0.14);
+}
+.sensesTitle{ font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(240,240,242,0.6); margin-bottom: 6px; }
+.sensesList{ list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sensesList li{ font-size: 13px; line-height: 1.35; font-style: italic; color: rgba(240,240,242,0.88); padding-left: 14px; position: relative; }
+.sensesList li::before{ content: "›"; position: absolute; left: 0; color: rgba(250,208,44,0.6); font-style: normal; }
+.sensesList li.monster, .sensesList li.danger{ color: #ffb4a8; }
+.sensesList li[data-area]{ cursor: default; }
+
+/* Night sky card */
+.nightCard{
+  position:absolute; inset:0; z-index: 40;
+  display:flex; align-items:center; justify-content:center;
+  background: radial-gradient(ellipse at 50% 20%, rgba(30,40,80,0.55), rgba(4,6,14,0.88));
+  padding: 16px;
+}
+.nightInner{
+  width: min(520px, 100%);
+  max-height: 100%;
+  overflow:auto;
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: rgba(8,10,20,0.82);
+  border: 1px solid rgba(160,190,255,0.22);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.nightKicker{ font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: rgba(190,210,255,0.7); }
+.nightTitle{ font-family: var(--hud); font-size: 20px; margin: 4px 0 12px; }
+.nightFaces{ display:grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.nightFace{ display:flex; gap:10px; align-items:center; }
+.nightAvatar{
+  width: 40px; height: 40px; border-radius: 50%; flex: none;
+  display:grid; place-items:center;
+  font-weight: 700; color: #dfe8ff;
+  background: radial-gradient(circle at 35% 30%, rgba(170,200,255,0.45), rgba(60,80,140,0.25));
+  border: 1px solid rgba(170,200,255,0.35);
+  box-shadow: 0 0 18px rgba(140,180,255,0.25);
+}
+.nightName{ font-weight: 600; font-size: 14px; }
+.nightDistrict{ font-size: 12px; color: rgba(220,228,255,0.6); }
+.nightLines{ margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(160,190,255,0.15); display:grid; gap:6px; font-style: italic; font-size: 13px; }
+.nightFoot{ margin-top: 14px; display:flex; gap:12px; align-items:center; justify-content:space-between; }
+.nightFoot .btn{ font-size: 18px; padding: 8px 18px; }
+
+/* Journal drawer */
+.journalDot{ display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--accent); margin-left:6px; vertical-align: middle; }
+.journalDrawer{
+  position:absolute; top: 56px; right: 12px; bottom: 12px; z-index: 30;
+  width: min(360px, calc(100% - 24px));
+  display:flex; flex-direction:column;
+  background: rgba(14,12,12,0.94);
+  border: 1px solid rgba(250,208,44,0.22);
+  border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+.journalHead{ display:flex; justify-content:space-between; align-items:center; padding: 10px 12px; border-bottom: 1px solid rgba(250,208,44,0.14); }
+.journalBody{ overflow:auto; padding: 8px 12px 12px; }
+.journalDay h4{ margin: 12px 0 6px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: rgba(250,208,44,0.75); }
+.journalDay p{ margin: 0 0 6px; font-size: 13px; line-height: 1.4; color: rgba(240,240,242,0.88); }
+.journalDay p.night{ color: rgba(200,215,255,0.85); font-style: italic; }
+.toastAction{
+  margin-left: 10px; padding: 3px 10px; border-radius: 8px;
+  border: 1px solid rgba(250,208,44,0.4); background: transparent; color: var(--accent); cursor: pointer; font: inherit;
+}
+.pillCount{ margin-left: 6px; font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(250,208,44,0.14); color: var(--accent); }
+.groundMore{ width: 100%; margin-top: 4px; font-style: italic; }
+.itemPill.armed{ outline: 2px solid var(--accent); outline-offset: 1px; background: rgba(250,208,44,0.12); }
+.btn:disabled{ opacity: 0.45; cursor: not-allowed; }
+
+/* Capitol broadcast (end of game) */
+.modal.broadcast{ width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.bcKicker{ font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: #ff6b6b; }
+.bcTitle{ font-family: var(--hud); font-size: 26px; line-height: 1.15; margin: 6px 0 8px; }
+.bcLead{ font-style: italic; color: rgba(240,240,242,0.85); }
+.bcStats{ display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+.bcStats div{ text-align:center; padding: 10px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid rgba(250,208,44,0.16); color: rgba(240,240,242,0.7); font-size: 12px; }
+.bcStats span{ display:block; font-family: var(--hud); font-size: 24px; color: var(--accent); }
+.bcReelTitle{ font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: rgba(240,240,242,0.6); margin-top: 6px; }
+.bcReel{ margin: 6px 0 0; padding-left: 0; list-style: none; display:grid; gap: 6px; }
+.bcReel li{ font-size: 14px; }
+.bcReel b{ color: var(--accent); margin-right: 6px; font-weight: 600; }
+.bcJournal{ margin-top: 12px; }
+.bcJournal summary{ cursor: pointer; color: rgba(240,240,242,0.75); }
+.bcJournalBody{ max-height: 220px; overflow: auto; margin-top: 8px; font-size: 13px; }
+.bcJournalBody p{ margin: 0 0 6px; }
+.bcJournalBody b{ color: var(--accent); margin-right: 4px; }
+.morePill{ border-style: dashed; color: var(--accent); cursor: pointer; }
+
+/* v4: "what just happened" card at the top centre of the map (replaces the toast stack) */
+.toastHost{
+  top: 58px; left: 50%; right: auto; transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  align-items: stretch; gap: 6px;
+}
+.toast{ max-width: none; font-size: 14px; padding: 10px 14px; border-radius: 12px; background: rgba(14,12,12,0.9); }
+.toast:not(:last-child){ opacity: .5; font-size: 12px; padding: 6px 12px; }
+.toast:last-child{ border-color: rgba(250,208,44,0.4); box-shadow: 0 14px 34px rgba(0,0,0,.45); }
+@media (max-width: 900px){ .toastHost{ top: 54px; left: 50%; right: auto; } }
+
+/* =========================== STAGE MODE =========================== */
+/* Map-centred: slim HUD on top, map fills the rest, your area always in the centre,
+   the action card anchored next to it, a delicate log bottom-left. */
+.app.stage{ grid-template-columns: minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); grid-template-areas: "hud" "map"; height: 100vh; gap: 10px; padding: 10px 12px 12px; }
+.app.stage #rightPanel, .app.stage #leftPanel{ display: none !important; }
+.app.stage .canvasWrap{ grid-area: map; }
+.app.stage .areaInfo, .app.stage .hint{ display: none; }
+.app.stage .toastHost{ display: none; }
+.app.stage .minimap{ left: auto; right: 12px; bottom: 12px; width: 150px; height: 150px; opacity: .92; }
+
+.stageHud{ grid-area: hud; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; min-height: 38px; padding: 4px 14px; border: 1px solid rgba(250,208,44,0.14); border-radius: 12px; background: rgba(16,12,12,0.85); font-size: 12px; color: rgba(240,240,242,0.72); }
+.hudWho{ display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 500; font-size: 13px; }
+.hudPortrait{ width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--accent); display: grid; place-items: center; font-size: 10px; font-weight: 600; }
+.hudMut{ color: rgba(240,240,242,0.5); font-weight: 400; font-size: 11px; }
+.hudMeter{ display: flex; align-items: center; gap: 7px; }
+.hudLbl.body{ color: #ef8f7c; } .hudLbl.energy{ color: var(--accent); }
+.hudBar{ width: 76px; height: 3px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; display: block; }
+.hudBar i{ display: block; height: 100%; border-radius: 3px; transition: width .4s, background .4s; }
+.hudItems{ display: flex; gap: 4px; flex-wrap: wrap; }
+.hudItem{ height: 24px; padding: 0 8px; border-radius: 7px; border: 1px solid rgba(250,208,44,0.18); background: transparent; color: rgba(240,240,242,0.8); font: 11px/1 system-ui, sans-serif; cursor: pointer; }
+.hudItem.held{ border-color: var(--accent); color: var(--text); }
+.hudItem.armed{ background: rgba(250,208,44,0.15); border-color: var(--accent); }
+.hudItem:focus-visible{ outline: 2px solid var(--accent); outline-offset: 1px; }
+.hudRight{ margin-left: auto; display: flex; gap: 14px; }
+.hudRight b{ color: var(--text); font-weight: 600; }
+
+.youDot{ position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(250,208,44,0.18); pointer-events: none; z-index: 6; }
+.actionCard{ position: absolute; left: calc(50% + 70px); top: 50%; transform: translateY(-50%); width: min(330px, calc(50% - 90px)); z-index: 7;
+  padding: 12px 14px; border-radius: 12px; background: rgba(13,11,12,0.92); border: 1px solid rgba(250,208,44,0.24); box-shadow: 0 14px 40px rgba(0,0,0,0.55); backdrop-filter: blur(6px); font-size: 13px; }
+.actionCard::before{ content: ""; position: absolute; left: -62px; top: 50%; width: 62px; height: 1px; background: linear-gradient(90deg, rgba(250,208,44,0.0), rgba(250,208,44,0.5)); }
+.acPlace{ font-family: var(--hud); font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.acPlace span{ color: rgba(240,240,242,0.45); letter-spacing: .04em; text-transform: none; font-family: system-ui, sans-serif; font-size: 11px; }
+.acEvent{ margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+.acCtx{ margin: 4px 0 0; font-size: 12px; line-height: 1.5; color: rgba(240,240,242,0.62); }
+.acCtx .warn, .acWarn, .acBtn small.warn{ color: #ff8f7d; }
+.acRow{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.acBtn{ display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(250,208,44,0.28); background: rgba(250,208,44,0.04); color: var(--text); font: 12px/1.25 system-ui, sans-serif; text-align: left; cursor: pointer; }
+.acBtn small{ display: block; font-size: 11px; color: rgba(240,240,242,0.55); }
+.acBtn:hover{ background: rgba(250,208,44,0.12); }
+.acBtn:focus-visible, .acMore:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+.acBtn.first{ background: var(--accent); color: #1b1400; border-color: var(--accent); font-weight: 600; }
+.acBtn.first small{ color: #5a4600; font-weight: 400; }
+.acBtn.first small.warn{ color: #7a1500; }
+.acBtn.small{ min-height: 28px; padding: 3px 9px; }
+.acIc{ font-size: 14px; }
+.acMore{ margin-top: 8px; background: none; border: 0; padding: 0; color: rgba(240,240,242,0.55); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.acHint{ margin-top: 8px; font-size: 11px; color: rgba(240,240,242,0.45); }
+.acWarn{ margin-top: 6px; font-size: 11px; }
+
+.stageLog{ position: absolute; left: 12px; bottom: 12px; width: min(360px, 40%); z-index: 6; padding: 8px 10px; border-radius: 10px; background: rgba(13,11,12,0.66); border: 1px solid rgba(250,208,44,0.1); font-size: 11.5px; line-height: 1.45; color: rgba(240,240,242,0.85); }
+.stageLog p{ margin: 3px 0 0; }
+.stageLog b{ color: rgba(250,208,44,0.7); font-weight: 600; margin-right: 3px; }
+.logHead{ display: flex; justify-content: space-between; align-items: center; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: rgba(240,240,242,0.45); }
+.logHead button{ background: none; border: 0; padding: 0; color: rgba(250,208,44,0.75); font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+
+@media (max-width: 900px){
+  .app.stage{ height: auto; min-height: 100vh; grid-template-rows: auto 78vh; }
+  .actionCard{ left: 10px; right: 10px; width: auto; top: auto; bottom: 10px; transform: none; }
+  .actionCard::before{ display: none; }
+  .stageLog{ display: none; }
+  .app.stage .minimap{ display: none; }
+  .hudRight{ margin-left: 0; }
 }

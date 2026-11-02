@@ -29,6 +29,9 @@ import { generateNpcIntents } from "./ai.js";
 const FP_MAX = 100;
 
 const FP_COST = {
+  REST: 1,
+  HIDE: 2,
+  FORAGE: 6,
   ATTACK: 8,
   DEFEND: 4,
   COLLECT: 3,
@@ -157,6 +160,7 @@ function updateAreaNoise(world, events, { seed, day }){
 
   const byArea = new Map();
   for(const e of livingEntities(world)){
+    if(e.id === "player" && e._today?.hidden) continue; // lying low makes no noise
     const k = String(e.areaId);
     if(!byArea.has(k)) byArea.set(k, []);
     byArea.get(k).push(e);
@@ -206,6 +210,10 @@ function applyHighlyNoisyHostileEvents(world, events, { seed, day }){
     // Pick a deterministic victim.
     const idx = Math.floor(prng(seed + 911, day, `highly_noisy_victim_${area.id}`) * ents.length);
     const target = ents[idx] || ents[0];
+    if(target?.id === "player" && target._today?.hidden && prng(seed + 17, day, `hide_hostile_${area.id}`) < hideChance(target)){
+      events.push({ type:"HIDDEN_SAFE", who:"player", source:"arena", areaId: area.id, phase:"endDay" });
+      continue;
+    }
     const dmg = 12 + Math.floor(prng(seed + 121, day, `highly_noisy_dmg_${area.id}`) * 14); // 12..25
     applyDamage(target, dmg);
     events.push({ type:"HOSTILE_EVENT", who: target.id, areaId: area.id, dmg, note:"highly_noisy", phase:"endDay" });
@@ -367,7 +375,10 @@ function resolveMonsterRoamAndAoE(world, events, { seed, day } = {}){
 
     // Player
     const p = world?.entities?.player;
-    if(p && (p.hp ?? 0) > 0 && p.areaId === areaId){
+    const pHidden = p?._today?.hidden && prng(seed ?? 0, day ?? 0, `hide_monster_${m.id}`) < hideChance(p);
+    if(p && (p.hp ?? 0) > 0 && p.areaId === areaId && pHidden){
+      events.push({ type:"HIDDEN_SAFE", who:"player", source: m.id, areaId });
+    } else if(p && (p.hp ?? 0) > 0 && p.areaId === areaId){
       applyDamage(p, dmg);
       events.push({ type:"MONSTER_AOE", who: "player", monsterId: m.id, monsterName: m.name, monsterIcon: m.icon, verb, dmg, areaId });
       if((p.hp ?? 0) <= 0){
@@ -442,6 +453,8 @@ function getWeaponForAttack(entity, { prefer = "equipped", forDispute = false } 
   return { def: pick.def, inst };
 }
 
+function computeAttackDamageWorld(...args){ return computeAttackDamage(...args); }
+
 function computeAttackDamage(seed, day, attacker, target, { forDispute = false, weaponPrefer = "equipped", reserveStrongest = false } = {}){
   if(!canAttackWithFp(attacker)){
     return { ok:false, reason:"too_tired", dmg:0, weaponDefId:null, meta:{} };
@@ -495,6 +508,171 @@ function applyDamage(target, dmg){
   target.hp = Math.max(0, (target.hp ?? 100) - dmg);
 }
 
+// --- Defend posture ---
+// Defending halves incoming attack damage for the rest of the day (until you move).
+const DEFEND_DAMAGE_MULT = 0.5;
+
+// --- Hiding ---
+function hideChance(entity){ return Math.min(0.9, 0.5 + 0.04 * Number(entity?.attrs?.P ?? 0)); }
+
+// --- Dogpile cap ---
+// At most this many attackers can hit the same target in one day (commit phase + End Day).
+// Without it the AI focuses everyone in the area on whoever is most injured.
+const MAX_ATTACKERS_PER_TARGET = 3;
+function attackersSoFar(target){ return Number(target?._today?.timesAttacked || 0); }
+function noteAttacked(target){
+  if(!target) return;
+  target._today = target._today || {};
+  target._today.timesAttacked = attackersSoFar(target) + 1;
+}
+function defendScale(target, dmg){
+  const n = Math.max(0, Number(dmg) || 0);
+  if(n > 0 && target?._today?.defending) return Math.ceil(n * DEFEND_DAMAGE_MULT);
+  return n;
+}
+
+// --- Auto-equip (player) ---
+// When the player acquires a weapon, equip it if nothing is equipped or it is stronger.
+function autoEquipAfterPickup(entity, events){
+  if(!entity || entity.id !== "player" || !entity.inventory) return;
+  entity.inventory.equipped = entity.inventory.equipped || {};
+  const curId = entity.inventory.equipped.weaponDefId || null;
+  const curInst = curId ? (entity.inventory.items || []).find(it => it.defId === curId) : null;
+  let curDmg = curInst ? Number(computeWeaponDamage(getItemDef(curId), curInst.qty, null, null)?.dmg || 0) : -1;
+  const curDef = curInst ? getItemDef(curId) : null;
+  if(curDef?.effects?.selfDamage || curDef?.effects?.penetratesShield) curDmg = Math.min(curDmg, 12);
+  if(curDef?.effects?.appliesPoison) curDmg = Math.max(curDmg, 10);
+
+  let best = null;
+  for(const it of (entity.inventory.items || [])){
+    const def = getItemDef(it.defId);
+    if(!def || def.type !== ItemTypes.WEAPON || def.id === "fist") continue;
+    let dmg = Number(computeWeaponDamage(def, it.qty, null, null)?.dmg || 0);
+    // Situational weapons (single-use blasts, poison darts) are never the default grip.
+    if(def.effects?.selfDamage || def.effects?.penetratesShield) dmg = Math.min(dmg, 12);
+    if(def.effects?.appliesPoison) dmg = Math.max(dmg, 10);
+    if(!best || dmg > best.dmg) best = { def, dmg };
+  }
+  if(!best) return;
+  if(!curInst || best.dmg > curDmg){
+    if(best.def.id === curId) return;
+    entity.inventory.equipped.weaponDefId = best.def.id;
+    events.push({ type:"AUTO_EQUIP", who:"player", weaponDefId: best.def.id, previous: curInst ? curId : null });
+  }
+}
+
+// --- Perception & senses (immersive) ---
+// The player never receives raw data about other areas. Instead, every refresh produces
+// a short list of *sensations* about neighbouring areas (sounds, smells, signs), with a
+// compass direction. Perception (P 0..10) controls how reliable and how precise they are:
+//   - detection chance per real feature grows with P;
+//   - low P produces false alarms ("someone is there" when no one is);
+//   - clarity: P>=7 "clear", P<=3 "vague", otherwise "plain".
+// Visited areas are remembered (world.flags.intel), and that memory fades in the UI with age.
+export function senseClarity(entity){
+  const P = Number(entity?.attrs?.P ?? 0);
+  if(P >= 7) return "clear";
+  if(P <= 3) return "vague";
+  return "plain";
+}
+
+function compassDir(world, fromId, toId){
+  const cells = world?.map?.uiGeom?.cells || [];
+  const a = cells.find(c => c?.id === Number(fromId));
+  const b = cells.find(c => c?.id === Number(toId));
+  const ax = a?.center?.x, ay = a?.center?.y, bx = b?.center?.x, by = b?.center?.y;
+  if(![ax, ay, bx, by].every(Number.isFinite)) return "nearby";
+  const ang = Math.atan2(-(by - ay), bx - ax); // y grows downwards on the map
+  const dirs = ["east", "north-east", "north", "north-west", "west", "south-west", "south", "south-east"];
+  const idx = ((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8;
+  return dirs[idx];
+}
+
+function areaMemorySnapshot(world, area){
+  const ground = Array.isArray(area?.groundItems) ? area.groundItems : [];
+  const food = [];
+  let heal = false;
+  for(const it of ground){
+    const def = getItemDef(it?.defId);
+    if(!def) continue;
+    if(def.effects?.healFP) food.push(def.id);
+    if(def.effects?.healHP) heal = true;
+  }
+  return {
+    day: Number(world?.meta?.day ?? 1),
+    food,
+    heal,
+    water: !!area?.hasWater,
+    cornucopia: !!area?.hasFood
+  };
+}
+
+const SENSE_PRIORITY = { monster: 0, danger: 1, people: 2, water: 3, food: 4, heal: 5, trap: 6 };
+
+function senseNeighbours(world, p){
+  const seed = Number(world.meta?.seed ?? 0);
+  const day = Number(world.meta?.day ?? 1);
+  const P = Number(p.attrs?.P ?? 0);
+  const clarity = senseClarity(p);
+  const out = [];
+  const adj = (world.map?.adjById?.[String(p.areaId)] || []).map(Number);
+  const npcs = Object.values(world.entities?.npcs || {}).filter(n => (n.hp ?? 0) > 0);
+  const monsters = livingMonsters(world);
+
+  for(const id of adj){
+    const a = world.map.areasById[String(id)];
+    if(!a || a.isActive === false) continue;
+    // Sensing an area means its loot exists now (same rules as entering it).
+    spawnEnterRewardsIfNeeded(world, a, { seed, day });
+    const dir = compassDir(world, p.areaId, id);
+    const roll = (k) => prng(seed, day, `sense_${k}_${p.areaId}_${id}`);
+    const add = (kind, detail = null, falseAlarm = false) => out.push({ areaId: id, dir, kind, detail, clarity, falseAlarm });
+
+    if(monsters.some(m => Number(m.areaId) === id) && roll("monster") < 0.9) add("monster");
+    if(a.noiseState === "highly_noisy" && roll("danger") < 0.6 + 0.03 * P) add("danger");
+
+    const here = npcs.filter(n => Number(n.areaId) === id).length;
+    if(here > 0){
+      if(roll("people") < 0.35 + 0.06 * P) add("people", here);
+    } else if(roll("people_false") < Math.max(0.03, 0.25 - 0.022 * P)){
+      add("people", 1, true);
+    }
+
+    if(a.hasWater && roll("water") < 0.5 + 0.05 * P) add("water");
+
+    const ground = Array.isArray(a.groundItems) ? a.groundItems : [];
+    const food = ground.map(g => getItemDef(g?.defId)).find(d => d?.effects?.healFP);
+    if(food && roll("food") < 0.30 + 0.06 * P) add("food", food.id);
+    const heal = ground.some(g => getItemDef(g?.defId)?.effects?.healHP);
+    if(heal && P >= 5 && roll("heal") < 0.2 + 0.06 * P) add("heal");
+
+    const traps = (Array.isArray(a.traps) ? a.traps : []).filter(t => t && t.ownerId !== "player");
+    if(traps.length && P >= 6 && roll("trap") < 0.15 + 0.06 * P) add("trap");
+  }
+
+  // The area you stand in: how exposed it feels.
+  const cur = world.map.areasById[String(p.areaId)];
+  if(cur?.noiseState === "highly_noisy") out.push({ areaId: cur.id, dir: "here", kind: "danger", clarity, falseAlarm: false });
+  else if(cur?.noiseState === "noisy") out.push({ areaId: cur.id, dir: "here", kind: "noise", clarity, falseAlarm: false });
+
+  out.sort((x, y) => (SENSE_PRIORITY[x.kind] ?? 9) - (SENSE_PRIORITY[y.kind] ?? 9));
+  return out.slice(0, 6);
+}
+
+export function refreshPlayerIntel(world){
+  const p = world?.entities?.player;
+  if(!world?.map || !p || (p.hp ?? 0) <= 0) return;
+  world.flags = world.flags || {};
+  const intel = (world.flags.intel = world.flags.intel || {});
+
+  // Memory of the place you are standing in (what you can see with your own eyes).
+  const here = world.map.areasById[String(p.areaId)];
+  if(here) intel[String(here.id)] = areaMemorySnapshot(world, here);
+
+  // Sensations about the surroundings.
+  world.flags.senses = { day: Number(world.meta?.day ?? 1), areaId: p.areaId, items: senseNeighbours(world, p) };
+}
+
 function clampFp(entity){
   entity.fp = Math.max(0, Math.min(FP_MAX, Number(entity.fp ?? FP_MAX)));
 }
@@ -507,7 +685,7 @@ function spendFp(entity, amount){
 }
 
 function canAttackWithFp(entity){
-  return Number(entity?.fp ?? 0) >= 10;
+  return Number(entity?.fp ?? FP_MAX) >= 10;
 }
 
 function applyFpDamageModifier(attacker, dmg){
@@ -1108,12 +1286,22 @@ export function commitPlayerAction(world, action){
       const attacker = actorById(next, attackerId);
       if(!attacker || (attacker.hp ?? 0) <= 0) continue;
       if(attacker._today?.attackResolved) continue;
+      if(attackersSoFar(player) >= MAX_ATTACKERS_PER_TARGET) break;
+      noteAttacked(player);
 
       if(player._today?.invisible) continue;
 
-      const dmgRes = computeAttackDamage(seed, day, attacker, player, { forDispute:false, reserveStrongest:false });
+      // NOTE: commitPlayerAction defines a local computeAttackDamage(attacker, target) that shadows
+      // the module-level one; use the explicit world-level helper here.
+      const dmgRes = computeAttackDamageWorld(seed, day, attacker, player, { forDispute:false, reserveStrongest:false });
       let dmg = dmgRes.dmg;
       const weaponDefId = dmgRes.weaponDefId;
+      if(!dmgRes.ok){
+        events.push({ type:"ATTACK", who: attackerId, target: "player", ok:false, reason: dmgRes.reason || "failed", dmg: 0, weaponDefId, areaId: player.areaId });
+        attacker._today = attacker._today || {};
+        attacker._today.attackResolved = true;
+        continue;
+      }
 
       const shielded = !!player._today?.defendedWithShield;
       if(shielded && weaponDefId){
@@ -1133,8 +1321,10 @@ export function commitPlayerAction(world, action){
         }
       }
 
+      const rawDmg = dmg;
+      dmg = defendScale(player, dmg);
       applyDamage(player, dmg);
-      events.push({ type:"ATTACK", who: attackerId, target: "player", dmg, weaponDefId, areaId: player.areaId });
+      events.push({ type:"ATTACK", who: attackerId, target: "player", dmg, weaponDefId, areaId: player.areaId, ...(dmg < rawDmg ? { defended:true, rawDmg } : {}) });
 
       if(weaponDefId){
         const wDef = getItemDef(weaponDefId);
@@ -1160,6 +1350,7 @@ export function commitPlayerAction(world, action){
     // Finalize action resolution.
     // If the player (or an NPC during this resolution) killed a monster, drop loot immediately.
     handleMonsterDeathDrops(next, events, { seed, day });
+    refreshPlayerIntel(next);
     return { nextWorld: next, events };
   }
 
@@ -1183,6 +1374,7 @@ export function commitPlayerAction(world, action){
   player._today = player._today || {};
   player._today.defendedWithShield = false;
   player._today.invisible = false;
+  player._today.defending = false;
 
   const kind = action?.kind || "NOTHING";
 
@@ -1327,9 +1519,23 @@ export function commitPlayerAction(world, action){
       const startAreas = { player: player.areaId };
       for(const npc of Object.values(next.entities.npcs || {})) startAreas[npc.id] = npc.areaId;
 
-      const fight = resolveTieFight(next, best.map(b=>b.id), area.id, { seed, day, killsThisDay: (next.flags?.killsThisDay || (next.flags.killsThisDay=[])), itemDefId: item.defId, startAreas });
+      const hpBefore = {};
+      for(const b of best){ hpBefore[b.id] = Number(actorById(next, b.id)?.hp ?? 0); }
+      next.flags = next.flags || {};
+      const fight = resolveTieFight(next, best.map(b=>b.id), area.id, { seed, day, killsThisDay: (next.flags.killsThisDay || (next.flags.killsThisDay=[])), itemDefId: item.defId, startAreas });
       winnerId = fight.winner || null;
       events.push({ type:"GROUND_CONTEST", areaId: area.id, itemDefId: item.defId, outcome:"tie_fight", tied: best.map(b=>b.id), winner: winnerId });
+
+      // Make the dispute visible: damage taken by each participant and any deaths.
+      for(const b of best){
+        const a = actorById(next, b.id);
+        const lost = Math.max(0, (hpBefore[b.id] || 0) - Number(a?.hp ?? 0));
+        if(lost > 0) events.push({ type:"DISPUTE_DAMAGE", who: b.id, dmg: lost, itemDefId: item.defId, areaId: area.id });
+        if(a && (a.hp ?? 0) <= 0){
+          events.push({ type:"DEATH", who: b.id, areaId: area.id, reason:"item_dispute", itemDefId: item.defId });
+          if(b.id !== "player" && winnerId === "player") player.kills = (player.kills ?? 0) + 1;
+        }
+      }
     }
 
     const winner = winnerId ? actorById(next, winnerId) : null;
@@ -1347,6 +1553,7 @@ export function commitPlayerAction(world, action){
       openBackpackIntoInventory(next, winner, area, removed, lootEvents, { seed, day });
       events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId:"backpack", qty:1, areaId: area.id, note:"opened" });
       events.push(...lootEvents);
+      if(winnerId === "player") autoEquipAfterPickup(player, events);
       return finalize();
     }
 
@@ -1367,6 +1574,7 @@ export function commitPlayerAction(world, action){
     }
 
     events.push({ type:"COLLECT", ok:true, who: winnerId, itemDefId: removed.defId, qty: removed.qty || 1, areaId: area.id });
+    if(winnerId === "player") autoEquipAfterPickup(player, events);
 
     // Cornucopia memory: mark weapon pickup for the winner.
     if(Number(area.id) === 1 && winnerId && winnerId !== "player"){
@@ -1428,37 +1636,13 @@ export function commitPlayerAction(world, action){
     } else {
       events.push({ type:"DEFEND", ok:true });
     }
+    // Defending halves incoming attack damage for the rest of the day (moving cancels it).
+    // Attacks themselves are resolved by the normal attack pipeline (finalize + End Day),
+    // so defending no longer adds an extra random attack against you.
+    player._today.defending = true;
 
     if(!npcsHere.length){
       events.push({ type:"INFO", msg:"No threats nearby." });
-      return finalize();
-    }
-
-    // 50% chance of being attacked while defending
-    const attacked = prng(seed, day, "def_atk") < 0.5;
-    if(!attacked){
-      events.push({ type:"INFO", msg:"No one attacked you." });
-      return finalize();
-    }
-
-    const attacker = pickRandomNpc("def_attacker");
-    const atk = computeAttackDamage(attacker, player);
-    let incoming = atk.ok ? atk.dmg : 8;
-
-    // Shield blocks incoming (unless weapon is not blocked)
-    if(player._today.defendedWithShield){
-      const w = getEquippedWeapon(attacker);
-      const blocked = w ? isBlockedByShield(w.def) : true;
-      if(blocked){
-        incoming = 0;
-        events.push({ type:"SHIELD_BLOCK", who:"player", from: attacker?.id ?? "unknown" });
-      }
-    }
-
-    if(incoming > 0){
-      applyDamage(player, incoming);
-      events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg: incoming });
-      if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
     }
     return finalize();
   }
@@ -1519,9 +1703,11 @@ export function commitPlayerAction(world, action){
       events.push({ type:"SHIELD_BROKEN", who: targetId, by:"player" });
     }
 
+    const rawDealt = dmg;
+    dmg = defendScale(target, dmg);
     if(dmg > 0){
       applyDamage(target, dmg);
-      events.push({ type:"ATTACK", ok:true, target: targetId, dmgDealt: dmg, weapon: w?.name || "Fists" });
+      events.push({ type:"ATTACK", ok:true, target: targetId, dmgDealt: dmg, weapon: w?.name || "Fists", ...(dmg < rawDealt ? { defended:true } : {}) });
     } else {
       events.push({ type:"ATTACK", ok:true, target: targetId, dmgDealt: 0, weapon: w?.name || "Fists", note:"blocked" });
     }
@@ -1559,9 +1745,44 @@ export function commitPlayerAction(world, action){
     return finalize();
   }
 
+  // --- Solo actions (meant for when you are alone) ---
+  if(kind === "REST"){
+    player._today.resting = true;
+    events.push({ type:"REST", who:"player", ok:true, pending:true });
+    return finalize();
+  }
+  if(kind === "HIDE"){
+    player._today.hidden = true;
+    events.push({ type:"HIDE", who:"player", ok:true });
+    return finalize();
+  }
+  if(kind === "FORAGE"){
+    const area = next.map?.areasById?.[String(player.areaId)];
+    const biome = String(area?.biome || "").toLowerCase();
+    const veg = ["plains","woods","forest","jungle","savanna","caatinga","fairy","swamp","lake"].includes(biome);
+    const P = Number(player.attrs?.P ?? 0);
+    const tries = Number(area?._forageTries || 0);
+    const chance = Math.max(0.05, (veg ? 0.55 : 0.25) + 0.03 * P - 0.15 * tries); // the land runs out
+    if(area) area._forageTries = tries + 1;
+    if(prng(seed, day, `forage_${player.areaId}`) < chance){
+      let pick = "wild_fruits";
+      if(["plains","savanna","caatinga"].includes(biome)) pick = "edible_roots";
+      if(["lake","swamp"].includes(biome)) pick = "freshwater_fish";
+      const inst = { defId: pick, qty: 1, meta: { foraged: true } };
+      events.push({ type:"FORAGE", who:"player", ok:true, itemDefId: pick });
+      const consumed = applyOnCollect(next, player, area, inst, events);
+      if(!consumed.consumed) addToInventory(player.inventory, inst);
+    } else {
+      events.push({ type:"FORAGE", who:"player", ok:false });
+    }
+    return finalize();
+  }
+
   // NOTHING
   // If there are NPCs here, there is a chance you get hit (you were careless).
-  if(npcsHere.length && prng(seed, day, "nth_atk") < 0.35){
+  // Perception lowers the chance of being caught off guard (P0: 35% … P10: 10%).
+  const ambushChance = Math.max(0.10, 0.35 - 0.025 * Number(player.attrs?.P ?? 0));
+  if(npcsHere.length && prng(seed, day, "nth_atk") < ambushChance){
     const attacker = pickRandomNpc("nth_attacker");
     const atk = computeAttackDamage(attacker, player);
     let dmg = atk.ok ? atk.dmg : 5;
@@ -1575,6 +1796,8 @@ export function commitPlayerAction(world, action){
     }
 
     applyDamage(player, dmg);
+    if(attacker){ attacker._today = attacker._today || {}; attacker._today.attackResolved = true; }
+    noteAttacked(player);
     events.push({ type:"NOTHING", ok:true, note:"caught_off_guard" });
     events.push({ type:"DAMAGE_RECEIVED", from: attacker?.id ?? "unknown", dmg });
     if((player.hp ?? 0) <= 0) events.push({ type:"DEATH", who:"player", areaId: player.areaId });
@@ -1757,6 +1980,9 @@ export function moveActorOneStep(world, who, toAreaId){
   entity._today.moved = true;
   // Moving cancels defensive/stealth positioning. You always end in the open.
   entity._today.defendedWithShield = false;
+  entity._today.defending = false;
+  entity._today.hidden = false;
+  entity._today.resting = false;
   entity._today.invisible = false;
   events.push({ type:"FP_COST", who, kind:"MOVE", spent: fpRes.spent, fp: entity.fp, from, to });
 
@@ -1784,6 +2010,7 @@ export function moveActorOneStep(world, who, toAreaId){
     const v = new Set(world.flags.visitedAreas || []);
     v.add(1); v.add(to);
     world.flags.visitedAreas = Array.from(v).sort((a,b)=>a-b);
+    refreshPlayerIntel(world);
   }
   return { ok:true, events };
 }
@@ -1851,9 +2078,22 @@ export function endDay(world, npcIntents = [], dayEvents = []){
   }
 
   // RESET_TODAY_FLAGS: clear per-day flags (defend/invisible/fed/etc.).
+  // Keep the flags that were set *today* during the player's committed action
+  // (defend posture, shield, camouflage, and which NPCs already attacked) so the
+  // End Day resolution honours them instead of resolving those attacks again.
   for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})]){
     if(!e) continue;
+    const prev = e._today || {};
     e._today = {};
+    if(prev.attackResolved) e._today.attackResolved = true;
+    if(e.id === "player"){
+      if(prev.timesAttacked) e._today.timesAttacked = prev.timesAttacked;
+      if(prev.hidden) e._today.hidden = true;
+      if(prev.resting){ e._today.resting = true; e._restPending = true; e._hpAtRest = Number(e.hp ?? 100); }
+      if(prev.defending) e._today.defending = true;
+      if(prev.defendedWithShield) e._today.defendedWithShield = true;
+      if(prev.invisible) e._today.invisible = true;
+    }
   }
 
   // NPCs: always try to keep the strongest weapon equipped.
@@ -1887,6 +2127,7 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       // treated as a defensive posture (lower priority than shield mechanics).
       a._today = a._today || {};
       a._today.defendedWithShield = true;
+      a._today.defending = true;
       defended.add(a.id);
       events.push({ type:"DEFEND", who: a.id, areaId: a.areaId });
     }
@@ -1944,6 +2185,8 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       if(a._today?.attackResolved) continue;
       // If they defended, they can't attack that day.
       if(a._today?.defendedWithShield) continue;
+      if(attackersSoFar(t) >= MAX_ATTACKERS_PER_TARGET) continue;
+      noteAttacked(t);
       attackDecl.set(a.id, targetId);
     }
   }
@@ -1977,8 +2220,12 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       }
     }
 
+    const rawDmg = dmg;
+    dmg = defendScale(target, dmg);
     applyDamage(target, dmg);
-    events.push({ type:"ATTACK", who: attackerId, target: targetId, dmg, weaponDefId, areaId: attacker.areaId });
+    events.push({ type:"ATTACK", who: attackerId, target: targetId, dmg, weaponDefId, areaId: attacker.areaId, ...(dmg < rawDmg ? { defended:true, rawDmg } : {}) });
+    attacker._today = attacker._today || {};
+    attacker._today.attackResolved = true;
 
     // Hot-zone memory.
     addAreaHistoryTag(next, attacker.areaId, "recent_fight", day + 2);
@@ -2139,6 +2386,8 @@ export function endDay(world, npcIntents = [], dayEvents = []){
     if((a.trappedDays ?? 0) > 0) continue;
 
     if(act.type === "DEFEND"){
+      a._today = a._today || {};
+      a._today.defending = true;
       // Shield defend only matters if the actor has a shield equipped or in inventory.
       const hasShield = (a.inventory?.equipped?.defenseDefId === "shield") || (a.inventory?.items || []).some(it => it.defId === "shield");
       if(hasShield){
@@ -2179,6 +2428,11 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       if(t._today?.invisible) continue;
       // If the attacker defended with shield, they can't attack.
       if(a._today?.defendedWithShield) continue;
+      // Each NPC attacks at most once per day: skip anyone whose attack was already
+      // resolved (commit-action phase or the earlier posture pass above).
+      if(a._today?.attackResolved || attackDecl.has(a.id)) continue;
+      if(attackersSoFar(t) >= MAX_ATTACKERS_PER_TARGET) continue;
+      noteAttacked(t);
       npcAttacks.push({ attackerId: a.id, targetId: t.id, areaId: a.areaId });
       continue;
     }
@@ -2219,8 +2473,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       if(blocked.blocked){
         events.push({ type:"ATTACK_BLOCKED", who:first.id, target:second.id, areaId:first.areaId, weaponDefId:r1.weaponDefId });
       } else {
-        applyDamage(second, r1.dmg);
-        events.push({ type:"ATTACK", who:first.id, target:second.id, areaId:first.areaId, dmg:r1.dmg, weaponDefId:r1.weaponDefId });
+        const d1 = defendScale(second, r1.dmg);
+        applyDamage(second, d1);
+        events.push({ type:"ATTACK", who:first.id, target:second.id, areaId:first.areaId, dmg:d1, weaponDefId:r1.weaponDefId, ...(d1 < r1.dmg ? { defended:true, rawDmg:r1.dmg } : {}) });
         if(blocked.brokeShield){
           second._today = second._today || {};
           second._today.defendedWithShield = false;
@@ -2242,8 +2497,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       if(blocked2.blocked){
         events.push({ type:"ATTACK_BLOCKED", who:second.id, target:first.id, areaId:second.areaId, weaponDefId:r2.weaponDefId });
       } else {
-        applyDamage(first, r2.dmg);
-        events.push({ type:"ATTACK", who:second.id, target:first.id, areaId:second.areaId, dmg:r2.dmg, weaponDefId:r2.weaponDefId });
+        const d2 = defendScale(first, r2.dmg);
+        applyDamage(first, d2);
+        events.push({ type:"ATTACK", who:second.id, target:first.id, areaId:second.areaId, dmg:d2, weaponDefId:r2.weaponDefId, ...(d2 < r2.dmg ? { defended:true, rawDmg:r2.dmg } : {}) });
         if(blocked2.brokeShield){
           first._today = first._today || {};
           first._today.defendedWithShield = false;
@@ -2278,8 +2534,9 @@ export function endDay(world, npcIntents = [], dayEvents = []){
       events.push({ type:"ATTACK_BLOCKED", who:attacker.id, target:target.id, areaId:attacker.areaId, weaponDefId:r.weaponDefId });
       continue;
     }
-    applyDamage(target, r.dmg);
-    events.push({ type:"ATTACK", who:attacker.id, target:target.id, areaId:attacker.areaId, dmg:r.dmg, weaponDefId:r.weaponDefId });
+    const d3 = defendScale(target, r.dmg);
+    applyDamage(target, d3);
+    events.push({ type:"ATTACK", who:attacker.id, target:target.id, areaId:attacker.areaId, dmg:d3, weaponDefId:r.weaponDefId, ...(d3 < r.dmg ? { defended:true, rawDmg:r.dmg } : {}) });
     if(blocked.brokeShield){
       target._today = target._today || {};
       target._today.defendedWithShield = false;
@@ -2461,7 +2718,13 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
   e._today.fed = false;
   e._today.mustFeed = false;
   e._today.defendedWithShield = false;
+  e._today.defending = false;
   e._today.invisible = false;
+  // New day: everyone may attack again, and yesterday's tallies/postures are gone.
+  e._today.attackResolved = false;
+  e._today.timesAttacked = 0;
+  e._today.hidden = false;
+  e._today.resting = false;
 
   const a = next.map.areasById[String(e.areaId)];
   const noise = a?.noiseState || NOISE.QUIET;
@@ -2508,8 +2771,11 @@ for(const e of [next.entities.player, ...Object.values(next.entities.npcs || {})
 
   // Persist the current AI phase for the debug UI/telemetry.
   const aiPhase = String(next?.meta?.aiPhase || "");
+  applyRestAndSponsors(next, events, { seed: next.meta.seed, day });
+
   next.log.days.push({ day, aiPhase, events, debug: { sharedNpcCount, attacksPossible, attacksExecuted } });
 
+  refreshPlayerIntel(next);
   return next;
 }
 
@@ -2732,6 +2998,7 @@ function distributeSpoils(world, kills, events, { seed, day }){
       const ok = tryAddWithNpcAutoDiscard(picker.actor, nextItem, events, { areaId: k.areaId });
       if(ok.ok){
         events.push({ type:"SPOILS_PICK", who: picker.id, from: k.deadId, itemDefId: nextItem.defId, qty: nextItem.qty || 1, areaId: k.areaId });
+        if(picker.id === "player") autoEquipAfterPickup(picker.actor, events);
       } else {
         // drop to ground
         area.groundItems = Array.isArray(area.groundItems) ? area.groundItems : [];
@@ -2779,5 +3046,58 @@ function applyClosuresForDay(world, day){
         a.willCloseOnDay = day + 1;
       }
     }
+  }
+}
+
+
+// --- Rest & sponsors (end of day) ---
+function applyRestAndSponsors(world, events, { seed, day }){
+  const p = world?.entities?.player;
+  if(!p || (p.hp ?? 0) <= 0) return;
+
+  // Rest: a quiet night heals you; being found while resting does not.
+  // (The _today flags were preserved through the End Day reset.)
+  const restedToday = !!p._restPending;
+  p._restPending = false;
+  if(restedToday){
+    const attacked = Number(p.hp ?? 0) < Number(p._hpAtRest ?? 0); // anything hurt you during the night
+    const quiet = (world.map?.areasById?.[String(p.areaId)]?.noiseState || "quiet") === "quiet";
+    const heal = attacked ? 0 : (quiet ? 16 : 10);
+    if(heal > 0){
+      p.hp = Math.min(100, Number(p.hp ?? 100) + heal);
+      events.push({ type:"REST", who:"player", ok:true, healed: heal, phase:"endDay" });
+    } else {
+      events.push({ type:"REST", who:"player", ok:false, phase:"endDay" });
+    }
+  }
+
+  // Sponsors: the audience rewards survival and boldness.
+  world.flags = world.flags || {};
+  const sp = (world.flags.sponsor = world.flags.sponsor || { favor: 0, gifts: 0, lastKills: 0 });
+  const kills = Number(p.kills || 0);
+  sp.favor += (day >= 2 ? 1 : 0) + 3 * Math.max(0, kills - sp.lastKills);
+  sp.lastKills = kills;
+  const threshold = 6 + 4 * sp.gifts;
+  if(sp.favor < threshold) return;
+  if(prng(seed, day, "sponsor_roll") >= 0.6) return;
+
+  const hp = Number(p.hp ?? 100), fp = Number(p.fp ?? 100);
+  const hasWeapon = (p.inventory?.items || []).some(it => getItemDef(it.defId)?.type === ItemTypes.WEAPON);
+  let gift = "survival_kit";
+  if(hp < 45) gift = "first_aid_backpack";
+  else if(fp < 35) gift = "capital_ration";
+  else if(!hasWeapon) gift = "knife";
+  else gift = (prng(seed, day, "sponsor_pick") < 0.5) ? "stimulant" : "survival_kit";
+
+  sp.favor -= threshold;
+  sp.gifts += 1;
+  const area = world.map?.areasById?.[String(p.areaId)];
+  const inst = { defId: gift, qty: 1, meta: { sponsor: true } };
+  events.push({ type:"SPONSOR_GIFT", who:"player", itemDefId: gift, phase:"endDay" });
+  const consumed = applyOnCollect(world, p, area, inst, events);
+  if(!consumed.consumed){
+    const ok = addToInventory(p.inventory, inst);
+    if(!ok.ok && area){ area.groundItems = Array.isArray(area.groundItems) ? area.groundItems : []; area.groundItems.push(inst); }
+    else if(ok.ok) autoEquipAfterPickup(p, events);
   }
 }
