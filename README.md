@@ -11,7 +11,8 @@ Open `index.html` (or `arena.html`) with a double-click. No server needed; keep 
 - **Body-driven guidance:** one line tells you what matters now; hovering an action shows what it will cost.
 - **The Cornucopia:** loot in three rings (at your feet / on the way in / at the horn) with rising risk; sealed packs; leftovers for later days. Items come from the real catalogue (swords, bows, shield, camouflage, nets, unlabelled flasks…).
 - **A living arena:** every tribute is on the map. They move each part of the day, scavenge, flee closing ground and fire, and fight each other using the classic engine's rules (district bias, Careers' soft alliance, aggression by district, weapons). Cannons come from real deaths; what you sense (footsteps, voices) is who is really there.
-- **Tributes:** real names by district, your district partner, Careers (districts 1–4) who hunt as a pack, alliances (allies walk with you), warning signs and betrayal. A tribute list shows who is alive and what you know about them.
+- **Tributes:** real names by district, your district partner, Careers (districts 1–4) who hunt as a pack, alliances (allies walk with you and share the danger), warning signs and betrayal — both ways: tap an ally to part ways or turn on them, or slip away / strike at night. A tribute list shows who is alive and what you know about them.
+- **Sponsors:** the audience rewards surviving and boldness (kills, betrayals); a silver parachute brings what you need most.
 - **Events:** storm, fog, fire or scarcity, announced by the Capitol.
 - **The arena closes:** from day 3, every two days, the four outermost areas are marked and vanish the next day. Anyone still there dies. The Cornucopia never closes.
 - **Endings:** a death screen with your story and how the games ended, or the victor screen.
