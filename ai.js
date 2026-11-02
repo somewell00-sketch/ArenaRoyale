@@ -798,8 +798,12 @@ function decideMove(world, npc, obs, traits, { seed, day, aiPhase, phaseProfile 
   const pool1 = forceLeaveCorn ? poolBase.filter(s => s.steps === 3) : poolBase;
   const pool = (pool1.length ? pool1 : poolBase).slice(0, 10);
 
+  // Nowhere to go (e.g. every neighbouring area has closed): stay put.
+  if(!pool.length) return { source: npc.id, type: "STAY", payload: {} };
+
   const pickR = hash01(seed, day, `move_pick|${npc.id}`);
   const chosen = weightedPick(pool, pickR, temperature) || pool[0];
+  if(!chosen || !Array.isArray(chosen.route)) return { source: npc.id, type: "STAY", payload: {} };
 
   return { source: npc.id, type: "MOVE", payload: { route: chosen.route } };
 }

@@ -468,8 +468,9 @@ export function generateMapData({ seed, regions, width=820, height=820, paletteI
 
   const W = width, H = height;
   const CX = W/2, CY = H/2;
-  const blobRadius = 290;
-  const padding = 40;
+  // Geometry scales with the canvas so larger arenas get more room, not smaller cells.
+  const blobRadius = 290 * (Math.min(W, H) / 820);
+  const padding = 40 * (Math.min(W, H) / 820);
 
   const noiseSlow = makeNoise(mulberry32(seed ^ 0x9e3779b9));
   const noiseFast = makeNoise(mulberry32(seed ^ 0x85ebca6b));

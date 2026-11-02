@@ -72,10 +72,13 @@ function _normalizeDef(raw){
 export async function initItems(){
   if(_initPromise) return _initPromise;
   _initPromise = (async () => {
-    const url = new URL("./data/items.json", import.meta.url);
-    const res = await fetch(url);
-    if(!res.ok) throw new Error(`Failed to load items.json (${res.status})`);
-    const json = await res.json();
+    // The standalone build (arena.html) embeds the item data so it runs from a double-click.
+    let json = (typeof window !== "undefined" && window.__ARENA_ITEMS__) ? window.__ARENA_ITEMS__ : null;
+    if(!json){
+      const res = await fetch("./data/items.json");
+      if(!res.ok) throw new Error(`Failed to load items.json (${res.status})`);
+      json = await res.json();
+    }
     const next = {};
     for(const [k, v] of Object.entries(json || {})){
       const def = _normalizeDef(v);

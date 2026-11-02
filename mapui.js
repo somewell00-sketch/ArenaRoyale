@@ -1,4 +1,5 @@
 import { BIOME_PT, PALETTES, BIOME_BG } from "./mapgen.js";
+import { memoryLines, senseLines, senseItemsFor } from "./narrative.js";
 
 // ------------------------------------------------------------
 // Selected-area texture overlay (image + base color)
@@ -94,6 +95,25 @@ function inradiusAtPoint(poly, x, y){
   return minD;
 }
 
+function drawCellBadge(ctx, poly, icon, viewScale){
+  if (!polylabelFn) return;
+  const p = polylabelFn([poly], 1.0);
+  const r = inradiusAtPoint(poly, p[0], p[1]);
+  if (!Number.isFinite(r) || r <= 0.1) return;
+  const s = viewScale || 1;
+  const size = 15 / s, pad = 5 / s;
+  const x = p[0], y = p[1] + Math.min(r * 0.6, 22 / s);
+  ctx.save();
+  ctx.fillStyle = "rgba(12,12,14,0.72)";
+  ctx.strokeStyle = "rgba(250,208,44,0.45)";
+  ctx.lineWidth = 1 / s;
+  ctx.beginPath(); ctx.arc(x, y, size / 2 + pad, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.font = `${size}px system-ui, "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(icon, x, y + 0.5 / s);
+  ctx.restore();
+}
+
 function drawSafeLabel(ctx, poly, label, isEmoji){
   if (!polylabelFn) return;
   const p = polylabelFn([poly], 1.0);
@@ -120,10 +140,14 @@ function drawSafeLabel(ctx, poly, label, isEmoji){
   ctx.translate(x, y);
   ctx.scale(scale, scale);
 
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0,0,0,0.50)";
-  ctx.fillStyle = isEmoji ? "rgba(255,255,255,0.95)" : "rgba(20,20,24,0.95)";
-  ctx.strokeText(label, 0, 0);
+  if(isEmoji){
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.50)";
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.strokeText(label, 0, 0);
+  } else {
+    ctx.fillStyle = "rgba(240,240,242,0.32)";
+  }
   ctx.fillText(label, 0, 0);
 
   ctx.restore();
@@ -299,11 +323,48 @@ export class MapUI {
     });
     canvas.addEventListener("click", (e) => this.handleClick(e));
 
+    // Optional mouse-wheel zoom (main map only).
+    if(this.options.wheelZoom){
+      canvas.addEventListener("wheel", (e) => {
+        if(!this.options.followPlayer) return;
+        e.preventDefault();
+        const dir = e.deltaY > 0 ? -1 : 1;
+        this.setZoom(this.getZoom() * (dir > 0 ? 1.15 : 1 / 1.15));
+      }, { passive: false });
+    }
+
     // Pointer events for dragging (safer across mouse/touch)
     canvas.addEventListener("pointerdown", (e) => this.handlePointerDown(e));
     window.addEventListener("pointermove", (e) => this.handlePointerMove(e));
     window.addEventListener("pointerup", (e) => this.handlePointerUp(e));
     window.addEventListener("pointercancel", (e) => this.handlePointerUp(e));
+  }
+
+  // --- Zoom controls ---
+  getZoom(){ return Number(this.options.zoom) || 2.6; }
+  setZoom(z){
+    const min = Number(this.options.minZoom) || 1;
+    const max = Number(this.options.maxZoom) || 5;
+    this.options.zoom = Math.max(min, Math.min(max, Number(z) || 2.6));
+    if(typeof this.options.onZoomChange === "function") this.options.onZoomChange(this.options.zoom, !!this.options.followPlayer);
+    this.render();
+  }
+  setFollow(follow){
+    this.options.followPlayer = !!follow;
+    this._pan.x = 0; this._pan.y = 0;
+    if(typeof this.options.onZoomChange === "function") this.options.onZoomChange(this.getZoom(), !!this.options.followPlayer);
+    this.render();
+  }
+  // Resize the drawing buffer to match the element's CSS box (keeps text crisp, no distortion).
+  resizeToElement(){
+    const el = this.canvas;
+    const w = Math.max(120, Math.round(el.clientWidth || el.width));
+    const h = Math.max(120, Math.round(el.clientHeight || el.height));
+    if(el.width !== w || el.height !== h){
+      el.width = w; el.height = h;
+      this._view = null;
+      this.render();
+    }
   }
 
   setData({ world, paletteIndex=0 }){
@@ -550,6 +611,11 @@ export class MapUI {
       const cell = (geom?.cells || []).find(c => c?.id === curId);
       let px = cell?.center?.x;
       let py = cell?.center?.y;
+      // Stage mode centres the visual middle of the polygon (the seed point can sit near an edge).
+      if(this.options.alwaysCenter && Array.isArray(cell?.poly) && cell.poly.length && polylabelFn){
+        const pl = polylabelFn([cell.poly], 1.0);
+        if(Number.isFinite(pl[0]) && Number.isFinite(pl[1])){ px = pl[0]; py = pl[1]; }
+      }
       if(!Number.isFinite(px) || !Number.isFinite(py)){
         // Fallback: approximate center from polygon vertices.
         const poly = cell?.poly || null;
@@ -564,7 +630,7 @@ export class MapUI {
       }
 
       tx = (cw / 2) - (px * s);
-      ty = (ch / 2) - (py * s);
+      ty = (ch * (0.5 + (Number(this.options.centerOffsetY) || 0))) - (py * s);
 
       // Apply user pan (dragging) in canvas space, but keep it stable when clamping.
       const panX = (!!this.options.draggable) ? (Number(this._pan?.x) || 0) : 0;
@@ -572,6 +638,13 @@ export class MapUI {
 
       const contentW = gw * s;
       const contentH = gh * s;
+
+      // Stage mode: the player's area is ALWAYS at the centre of the screen (no edge clamping).
+      if(this.options.alwaysCenter){
+        tx = tx + panX;
+        ty = ty + panY;
+        return { s, tx, ty, geomW: gw, geomH: gh, canvasW: cw, canvasH: ch };
+      }
 
       // If the scaled map already fits inside the canvas, keep it centered and ignore pan/clamp.
       if(contentW + pad * 2 <= cw){
@@ -761,7 +834,9 @@ export class MapUI {
       // Biome texture overlay (image + base color):
       // Shows on the ACTIVE area (player area) and also on HOVER (if any).
       // If hover differs from active, both can show.
-      if(USE_SELECTED_AREA_TEXTURE && !isClosed && (c.id === activeId || (hoverId != null && c.id === hoverId))){
+      const unknownTex = !isVisited && Number(this.options.unknownTextureAlpha || 0) > 0;
+      const showTex = c.id === activeId || (hoverId != null && c.id === hoverId) || (this.options.texturesOnVisited && isVisited) || unknownTex;
+      if(USE_SELECTED_AREA_TEXTURE && !isClosed && showTex){
         const texKey = (c.id === 1) ? "cornucopia" : String(area.biome || "").toLowerCase();
         const img = _getBiomeTexture(texKey);
         if(img && img.complete && img.naturalWidth > 0){
@@ -771,7 +846,9 @@ export class MapUI {
             // Clip to the cell polygon so the image stays inside it.
             drawPath(ctx, c.poly);
             ctx.clip();
-            ctx.globalAlpha = SELECTED_AREA_TEXTURE_ALPHA;
+            ctx.globalAlpha = (c.id === activeId) ? (this.options.activeTextureAlpha ?? SELECTED_AREA_TEXTURE_ALPHA)
+              : (!isVisited ? Number(this.options.unknownTextureAlpha) : (hoverId === c.id ? SELECTED_AREA_TEXTURE_ALPHA : (this.options.visitedTextureAlpha ?? SELECTED_AREA_TEXTURE_ALPHA)));
+            if(!isVisited) ctx.filter = "grayscale(1) brightness(0.8)";
             ctx.drawImage(img, b.x, b.y, b.w, b.h);
             ctx.restore();
           }
@@ -803,7 +880,12 @@ export class MapUI {
       if(isClosed) ctx.globalAlpha = 0.22;
       if (c.id === 1) drawSafeLabel(ctx, c.poly, "🍞", true);
       else drawSafeLabel(ctx, c.poly, String(c.id), false);
+      if(!isClosed && c.id !== 1){
+        const items = senseItemsFor(this.world, c.id);
+        if(items.length) drawCellBadge(ctx, c.poly, items[0].icon, v.s);
+      }
       ctx.restore();
+
     }
 
     if (river?.points?.length){
@@ -899,14 +981,9 @@ export class MapUI {
     const visited = new Set(this.world?.flags?.visitedAreas || []).has(areaId);
 
     const title = `Area ${areaId}`;
+    const sensed = senseItemsFor(this.world, areaId).map(x => `${x.icon}  ${x.text}`);
     if(!visited){
-      return [
-        title,
-        "Unknown territory.",
-        "Information is unclear until you enter.",
-        "Biome: Unknown",
-        "Noise: Unknown"
-      ];
+      return [title, "You have never been here.", ...sensed];
     }
 
     const biomeKey = area.biome;
@@ -923,15 +1000,16 @@ export class MapUI {
       noiseLine = "The arena is loud here. Something is hunting.";
     }
 
-    const lines = [title, `Biome: ${biomeName}`, `Noise: ${noiseTag}`, noiseLine];
-
-    if(area.hasWater) lines.push("Water: You spot usable water.");
-    else lines.push("Water: No clear source.");
+    const lines = [title, biomeName];
+    const isHere = Number(this.world?.entities?.player?.areaId) === Number(areaId);
+    if(isHere) lines.push(noiseLine);
+    lines.push(...memoryLines(this.world, areaId));
+    lines.push(...sensed);
 
     const isClosed = (area.isActive === false);
     const isWarning = (area.willCloseOnDay === (day + 1));
-    if(isClosed) lines.push("Status: Sealed off.");
-    else if(isWarning) lines.push("Status: The barrier shifts tomorrow.");
+    if(isClosed) lines.push("Sealed off. The air shimmers like a wall.");
+    else if(isWarning) lines.push("The air hums here. This place will not last the night.");
 
     // Optional short flavor cues if present.
     const flavor = (typeof area.flavor === "string" && area.flavor.trim()) ? area.flavor.trim() : null;

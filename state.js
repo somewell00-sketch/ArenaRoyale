@@ -3,7 +3,8 @@ import { mulberry32 } from "./rng.js";
 export const MapSize = {
   SMALL: 24,
   MEDIUM: 48,
-  LARGE: 72
+  LARGE: 72,
+  HUGE: 120
 };
 
 function createEmptyInventory(){

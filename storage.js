@@ -1,17 +1,18 @@
 const KEY = "arena_save_v1";
 
 export function saveToLocal(world){
-  localStorage.setItem(KEY, JSON.stringify(world));
+  try { localStorage.setItem(KEY, JSON.stringify(world)); } catch(_e) { /* storage unavailable: play without saving */ }
 }
 
 export function loadFromLocal(){
-  const raw = localStorage.getItem(KEY);
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch(_e) { return null; }
   if(!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
 }
 
 export function clearLocal(){
-  localStorage.removeItem(KEY);
+  try { localStorage.removeItem(KEY); } catch(_e) {}
 }
 
 export function downloadJSON(world){
