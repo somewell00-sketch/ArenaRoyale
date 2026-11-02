@@ -40,7 +40,21 @@ const CREATURES={cold:[["Wolf-Bear",15,25],["Iron Eagle",10,18],["Thermal Serpen
 const B2G={glacier:"cold",tundra:"cold",mountain:"cold",desert:"arid",caatinga:"arid",savanna:"arid",plains:"green",woods:"green",forest:"green",jungle:"green",swamp:"special",lake:"special",industrial:"special",cornucopia:"special"};
 const MODS=[["Brutal","add",10],["Ferocious","add",5],["Alpha","mul",1.5],["Venomous","poison"],["Toxic","poison"],["Hungry","flavor"],["Ancient","flavor"],["Blind","flavor"],["Giant","add",6],["Wounded","weak"]];
 const STRUCT=[["Safe Cave",["mountain","glacier"]],["Oasis",["desert","caatinga"]],["Fruit Tree",["jungle","forest"]],["Abandoned Shelter",["industrial"]]];
-function makeCreature(b){const g=CREATURES[B2G[b]||"green"];const [n,lo,hi]=g[Math.floor(R()*g.length)];const m=R()<.35?MODS[Math.floor(R()*MODS.length)]:null;return{n,lo,hi,mod:m}}
+// each mutt has a way of hunting
+const PROF={"Shadow Panther":"stalker","Mimetic Yeti":"stalker","Glass Lizard":"stalker","Thermal Serpent":"ambusher","Whip Scorpion":"ambusher","Pulse Eel":"ambusher",
+  "Giant Bullfrog":"brute","Bomb Armadillo":"brute","Wolf-Bear":"brute","Tracker Wasp":"hunter","Thorn Wolf":"hunter","Mechanical Dog":"hunter","Iron Eagle":"hunter",
+  "Howler Monkey":"skittish","Vigilant Vulture":"skittish","Blade Dragonfly":"skittish"};
+const PDATA={
+  hunter:{hunt:.3,range:3,blood:2,see:1,t:"Something on a scent",read:"It's following a scent. Yours.",still:.5,flee:.45,night:.06},
+  stalker:{hunt:.25,range:2,blood:1,see:.2,t:"A shape that shouldn't be there",read:"You never heard it coming.",still:.35,flee:.5,night:.07},
+  ambusher:{hunt:0,range:0,blood:0,see:.04,t:"Too still. Too quiet",read:"It was waiting here. For anyone.",still:.5,flee:.55,night:0},
+  brute:{hunt:0,range:0,blood:0,see:1,t:"Something huge, breathing slow",read:"It doesn't want to move. It wants you to.",still:.85,flee:.2,night:.02},
+  skittish:{hunt:.12,range:2,blood:1,see:1,t:"Chittering, restless",read:"All nerves and noise.",still:.75,flee:.25,night:.03,wander:.5}};
+const prof=cr=>PDATA[cr.p||(cr.p=PROF[cr.n]||"brute")];
+// can you tell it's there? (sneaky ones only with luck and a good eye; fixed per part of the day)
+function beastSeen(c){const cr=c.creature;if(!cr)return false;const P=prof(cr);if(P.see>=1)return true;const k=state.day*3+state.pi+":"+c.i;
+  if(cr.sk!==k){cr.sk=k;cr.sv=Math.random()<P.see+SETUP.P*(cr.p==="stalker"?.05:.035)+(cr.close?.1:0)}return cr.sv}
+function makeCreature(b){const g=CREATURES[B2G[b]||"green"];const [n,lo,hi]=g[Math.floor(R()*g.length)];const m=R()<.35?MODS[Math.floor(R()*MODS.length)]:null;return{n,lo,hi,mod:m,p:PROF[n]||"brute"}}
 const cells=pts.slice(0,NREAL).map((p,i)=>{
   let bb=null,bd=1e9;bseeds.forEach(([b,x,y])=>{const d=Math.hypot(x-p[0],y-p[1])+R()*50;if(d<bd){bd=d;bb=b}});
   const poly=vor.cellPolygon(i);
@@ -70,12 +84,13 @@ let start=corn;cells[corn].people=null;cells[corn].visited=true;cells[corn].seen
 })();
 // senses: derived from what is really there
 const SENSE={water:{c:"#8fb4ff",t:"Running water"},steps:{c:"#ece8e3",t:"Footsteps — someone alone"},beast:{c:"#ff8f7d",t:"Something big breathing"},smoke:{c:"#e9a23b",t:"Smoke and heat — fire"},crowd:{c:"#ece8e3",t:"Voices, more than one"}};
-function refreshSenses(){cells.forEach(c=>{c.sense=c.burning?"smoke":c.creature?"beast":c.people?c.people:c.water?"water":null})}
+let READY=false;
+function refreshSenses(){cells.forEach(c=>{const b=c.creature&&(!READY||beastSeen(c));c.sense=c.burning?"smoke":b?"beast":c.people?c.people:c.water?"water":null;c.senseT=b?prof(c.creature).t:null})}
 refreshSenses();
 const HAZ={heat:{n:"Heat",t:"The heat drains your strength.",peek:"Heat shimmers over the ground.",tone:"r"},cold:{n:"Cold",t:"Cold bites through your clothes.",peek:"Frost on everything.",tone:"b"},
   flooded:{n:"Flooded",t:"Water tugs at every step.",peek:"Standing water, knee-deep.",tone:"b"},toxic:{n:"Fumes",t:"A sharp chemical smell stings your lungs.",peek:"A chemical stink drifts from there.",tone:"y"},
   unstable:{n:"Loose ground",t:"The ground here is treacherous.",peek:"Loose rock. Careful.",tone:"y"}};
-const TAGTXT={exposed:["Exposed","You feel exposed here.","m"],sheltered:["Sheltered","This place offers some cover.","g"],rich:["Scavenged","Signs of scavenging everywhere.","g"],quiet:["Quiet","Strangely calm.","m"],hazard:null};
+const TAGTXT={exposed:["Exposed","Open ground. Easy to be seen, hard to hide.","m"],sheltered:["Sheltered","Cover here. Rest comes easier and nights are safer.","g"],rich:["Supplies","People left things here. Worth a search.","g"],quiet:["Quiet","Few people pass through.","m"],hazard:null};
 const STRUCTTXT={"Safe Cave":"A cave mouth, dry inside.","Oasis":"Palms, and water under them.","Fruit Tree":"A tree heavy with fruit.","Abandoned Shelter":"A shelter with a door that still shuts."};
 const FORAGE={forest:["fruit","roots"],jungle:["fruit","fruit","roots"],woods:["roots","fruit"],plains:["roots"],savanna:["roots"],lake:["fish"],swamp:["fish","roots"],mountain:["roots"],caatinga:["roots"],tundra:[],glacier:[],desert:[],industrial:[],cornucopia:[]};
 const LOOSE=["knife","club","pack","pack","bottle","band","potion","camo","net","firstaid","kit","stim","spear","axe"];
@@ -172,9 +187,9 @@ function endEvent(){EVENT.on=false;if(EVENT.type==="fire")cells.forEach(c=>{if(c
 // ---------- what your body wants ----------
 function intention(){const r0=intention0();if(r0.to!=null&&!cells[r0.to])delete r0.to;if(r0.a==="go"&&r0.to==null)return{a:"hide",u:r0.u,t:r0.t.replace(/ Head inward.*|— .*|Get out.*/,"")+" There's nowhere to go. Get low."};return r0}
 function intention0(){const you=cells[state.you];const nb=you.nb.map(n=>cells[n]).filter(c=>!c.closed&&!c.burning);
-  const fogged=EVENT.on&&EVENT.type==="fog"&&SETUP.P<8;const beastNb=fogged?null:you.nb.map(n=>cells[n]).find(c=>c.creature&&!c.closed);
+  const fogged=EVENT.on&&EVENT.type==="fog"&&SETUP.P<8;const beastNb=fogged?null:you.nb.map(n=>cells[n]).find(c=>c.creature&&!c.closed&&beastSeen(c));
   const away=(pred)=>nb.filter(pred).sort((a,b)=>a.dc-b.dc)[0];
-  if(state.bloodbath&&you.biome==="cornucopia"&&nb.length){const run=nb.slice().sort((a,b)=>(b.tags.includes("sheltered")?1:0)-(a.tags.includes("sheltered")?1:0)||(a.creature?1:0)-(b.creature?1:0))[0];
+  if(state.bloodbath&&you.biome==="cornucopia"&&nb.length){const run=nb.slice().sort((a,b)=>(b.tags.includes("sheltered")?1:0)-(a.tags.includes("sheltered")?1:0)||(a.creature&&beastSeen(a)?1:0)-(b.creature&&beastSeen(b)?1:0))[0];
     return{a:"loot",to:run.i,u:true,t:"The gong. Everyone is sprinting for the supplies. Go for the loot — or run while they fight."}}
   if(you.burning){const t=away(c=>!c.burning)||nb[0];if(t)return{a:"go",to:t.i,u:true,t:`Fire! The air is burning. Get out — ${dirOf(you,t)}, now.`}}
   if(state.bleed&&state.band>0)return{a:"bandage",t:"The cut on your arm keeps opening. Bind it before it gets worse."};
@@ -234,7 +249,7 @@ function forecast(a,to){if(a&&a.includes(":"))a=a.split(":")[0];const you=cells[
   case"ground":f="Look at what's here. Taking things is quick.";break;
   case"leftovers":f="What the bloodbath left behind. Careers might still be close.";break;
   case"go":{const c=cells[to];const bits=[];
-    if(c.burning)bits.push("It's burning.");else{if(!(EVENT.on&&EVENT.type==="fog")&&c.sense)bits.push(SENSE[c.sense].t+".");if(c.hazard&&SETUP.P>=5)bits.push(HAZ[c.hazard].peek);else if(c.hazard)bits.push("Something about it feels wrong.");
+    if(c.burning)bits.push("It's burning.");else{if(!(EVENT.on&&EVENT.type==="fog")&&c.sense)bits.push(((c.sense==="beast"&&c.senseT)||SENSE[c.sense].t)+".");if(c.creature&&!beastSeen(c)&&c.creature.p==="ambusher"&&SETUP.P>=5&&!(EVENT.on&&EVENT.type==="fog"))bits.push("Too quiet.");if(c.hazard&&SETUP.P>=5)bits.push(HAZ[c.hazard].peek);else if(c.hazard)bits.push("Something about it feels wrong.");
       if(c.struct&&c.seen)bits.push(STRUCTTXT[c.struct]);if(EVENT.on&&EVENT.type==="fog")bits.push("The fog hides the rest.")}
     if(c.closing)bits.push("Gone tonight.");f=bits.join(" ")||"Quiet there.";break}}
   return f+` <span class="cost">${state.pi===2?"Takes your evening. Then night.":`Takes your ${p}.`}</span>`}
@@ -303,7 +318,7 @@ function advance(){const you=cells[state.you];
   if(you.burning){state.hp-=12;state.fx.push(["− burned","r"]);why=`The fire caught you in the ${here}.`}
   if(EVENT.on&&EVENT.type==="storm"&&!sheltered(you)&&!state.sheltered){state.hp-=you.tags.includes("exposed")?6:3;state.fx.push(["− the storm","b"]);why=why||`The storm caught you out in the open, in the ${here}.`}
   if(you.burning)allyHarm(.35,"The fire takes them.");if(EVENT.on&&EVENT.type==="storm"&&you.tags.includes("exposed")&&!sheltered(you))allyHarm(.1,"The storm was too much.");
-  const hidNow=state.hiddenNow;state.hiddenNow=false;if(state.camo>0)state.camo--;
+  const hidNow=state.hiddenNow;state.hiddenNow=false;state.lastHid=hidNow;if(state.camo>0)state.camo--;
   if(state.hp<=0){die(state.pendingCause||state.lastHaz||why||"Your body simply stopped.");return rerenderAll()}
   // allies help
   state.allies.forEach(a=>{if(Math.random()<.22){if(state.thirst>=2){state.thirst--;state.fx.push([`${a.n} shares water`,"b"])}else if(state.en<55){state.en=Math.min(100,state.en+12);state.fx.push([`${a.n} shares food`,"g"])}}});
@@ -315,7 +330,7 @@ function advance(){const you=cells[state.you];
     if(b.hid&&!b.grabs&&!b.won)c-=.35;c+=(SETUP.S-6)*.04;
     if(Math.random()<Math.max(0,Math.min(.95,c))){state.packOffer=true;state.packWhy=b.won?`They saw what you did to ${b.won}.`:b.horn?`They saw you take the ${b.horn} from the horn.`:CAREER_ME?"District "+SETUP.district+". You trained for this.":""}}
   if(state.day===1&&!state.bbDone){state.bbDone=true;bloodbath();const d=state.deaths;state.deaths=[];cannonsFrom(d,"bloodbath")}
-  else{npcTurn();const d=state.deaths;state.deaths=[];cannonsFrom(d,"day");
+  else{npcTurn();const d=state.deaths;state.deaths=[];cannonsFrom(d,"day");const bc=muttsMove();if(bc)state.beastCome=bc.i;
     const v=atCell(state.you);if(v.length&&!hidNow&&Math.random()<(state.camo>0?.3:.7))state.arrival=v.find(r=>r.pack)||v[0]}
   if(state.pi===2){
     // the night itself
@@ -325,6 +340,8 @@ function advance(){const you=cells[state.you];
   else{state.pi++;state.phase=PH[state.pi];
     if(!EVENT.announced&&state.day>=EVENT.start&&state.pi>=1)startEvent()}
   state.lastHaz=null;
+  if(state.beastCome!=null&&!state.modal&&!state.dead){const c=cells[state.beastCome];state.beastCome=null;state.arrival=null;if(c.creature&&c.i===state.you){L(`Something comes into the ${c.name.toLowerCase()}.`);startBeast(c,true);return}}
+  state.beastCome=null;
   if(state.arrival&&!state.modal&&!state.dead&&state.alive>1){const f=state.arrival;state.arrival=null;L(`Someone steps into the ${cells[state.you].name.toLowerCase()}.`);startEncounter(false,f,true);return}
   state.arrival=null;
   if(state.alive<=1&&!state.dead&&!state.won){state.won=true;M("You were the last one standing.");state.modal={k:"win"}}
@@ -364,7 +381,7 @@ function npcTurn(){const you=state.you;state.deaths=state.deaths||[];
   npcs().filter(r=>!(r.pack&&!late)).forEach(r=>{const c=cells[r.at];let to=null;
     if(c.closing||c.closed||c.burning||c.hazard==="toxic")to=stepToward(r,x=>!x.closing&&!x.closed&&!x.burning&&x.hazard!=="toxic");
     else if(Math.random()<.45-r.caut*.15){const nb=c.nb.filter(n=>{const x=cells[n];return!x.closed&&!x.closing&&!x.burning&&!(x.creature&&r.aggr<.7)});
-      const score=n=>{const x=cells[n];let s=Math.random();if(x.tags.includes("sheltered"))s+=r.caut*.4;if(x.tags.includes("rich")||x.ground.some(g=>!g.hidden))s+=r.greed*.4;if(atCell(n).some(o=>o.pack))s-=r.career?0:.8;if(x.i===corn&&state.day>1)s+=r.greed*.2-r.caut*.3;if(state.day>=4)s+=(1-x.dc/maxd)*(.25+.08*(state.day-4));return s};
+      const score=n=>{const x=cells[n];let s=Math.random();if(x.tags.includes("sheltered"))s+=r.caut*.4;if(x.tags.includes("quiet"))s-=.2;if(x.tags.includes("rich")||x.ground.some(g=>!g.hidden))s+=r.greed*.4;if(atCell(n).some(o=>o.pack))s-=r.career?0:.8;if(x.i===corn&&state.day>1)s+=r.greed*.2-r.caut*.3;if(state.day>=4)s+=(1-x.dc/maxd)*(.25+.08*(state.day-4));return s};
       nb.sort((a,b)=>score(b)-score(a));to=nb[0]??null}
     if(to!=null)r.at=to});
   // what happens where they stand
@@ -434,9 +451,28 @@ function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(
 const art=w=>/^[aeiou]/i.test(w)?"an":"a";
 function beastName(cr){return cr.mod&&!cr.n.toLowerCase().includes(cr.mod[0].toLowerCase())?`${cr.mod[0]} ${cr.n}`:cr.n}
 function beastDmg(cr){let d=cr.lo+Math.random()*(cr.hi-cr.lo);if(cr.mod){if(cr.mod[1]==="add")d+=cr.mod[2];if(cr.mod[1]==="mul")d*=cr.mod[2];if(cr.mod[1]==="weak")d*=.6}return Math.round(d)}
-function startBeast(c){const cr=c.creature;const noticed=Math.random()>(.3+SETUP.P*.05)*(c.tags.includes("exposed")?.6:1)*(state.camo>0?1.5:1);
+function hops(a,b,max){if(a===b)return 0;let fr=[a];const seen=new Set([a]);for(let d=1;d<=max;d++){const nx=[];for(const i of fr)for(const n of cells[i].nb){if(seen.has(n)||cells[n].closed)continue;if(n===b)return d;seen.add(n);nx.push(n)}fr=nx}return null}
+function stepTo(a,b){let best=null,bd=1e9;cells[a].nb.forEach(n=>{if(cells[n].closed)return;const d=hops(n,b,6);if(d!=null&&d<bd){bd=d;best=n}});return best}
+// mutts move during the day: hunters follow scent and blood, skittish ones wander; returns your cell if one comes into it
+function muttsMove(){const you=cells[state.you];let came=null;const tick=state.day*3+state.pi;
+  if(state.lastAt===state.you)state.stayed=(state.stayed||0)+1;else state.stayed=0;state.lastAt=state.you;
+  cells.filter(c=>c.creature&&!c.closed&&c.i!==state.you).forEach(c=>{const cr=c.creature;if(cr.moved===tick)return;const P=prof(cr);let to=null;
+    const reach=P.range+(state.bleed?P.blood:0),d=P.hunt?hops(c.i,state.you,reach):null;
+    if(d&&state.day>=2&&Math.random()<P.hunt+(state.bleed?.2:0)+(state.stayed>=2?.15:0)+(cr.close?.15:0))to=stepTo(c.i,state.you);
+    else if(P.wander&&Math.random()<P.wander){const nb=c.nb.filter(n=>!cells[n].closed);to=nb[Math.floor(Math.random()*nb.length)]}
+    if(to==null)return;const t=cells[to];
+    if(to===state.you){const sneaky=cr.p==="stalker";if((cr.close||sneaky)&&!came&&!(state.beastDay>=state.day-1)&&state.pi<2&&!(state.lastHid&&Math.random()<.5)&&!(state.day<=2&&to===corn))came=c;return}
+    if(t.closed||t.closing||t.creature||t.burning||(state.day<=2&&to===corn))return;
+    t.creature=cr;c.creature=null;cr.moved=tick});
+  if(came){const cr=came.creature;came.creature=null;you.creature=cr;cr.moved=tick;state.beastDay=state.day;cr.close=false;return you}
+  // who is close now: a warning, if you can tell
+  cells.forEach(c=>{if(!c.creature)return;const cr=c.creature,adj=you.nb.includes(c.i),was=cr.close;cr.close=adj&&!!prof(cr).hunt;
+    if(cr.close&&!was){if(beastSeen(c))L(`Something is circling closer, ${dirOf(you,c)} of you.`);else if(cr.p==="stalker"&&Math.random()<.5)L("You feel watched.")}});
+  return null}
+function startBeast(c,came){const cr=c.creature;const P=prof(cr);const noticed=came?Math.random()>(state.camo>0?.5:.15):cr.p==="ambusher"?Math.random()<.7:Math.random()>(.3+SETUP.P*.05)*(c.tags.includes("exposed")?.6:1)*(state.camo>0?1.5:1);
   const read=[cr.hi>=25?"Bigger than anything should be":cr.hi>=16?"Big, and fast":"Small, but not harmless",cr.mod&&cr.mod[1]==="poison"?"Something wet on its fangs":cr.mod&&cr.mod[1]==="weak"?"It's hurt":cr.mod&&cr.mod[0]==="Blind"?"Its eyes are milk-white":"Made, not born"];
-  state.modal={k:"beast",c:c.i,cr,noticed,read,where:c.name};rerenderAll()}
+  read.splice(1,0,P.read);
+  state.modal={k:"beast",c:c.i,cr,noticed,read,where:c.name,came:came||null};rerenderAll()}
 function beastFore(o,m){const cr=m.cr;const odds=(cr.hi<=15?.7:cr.hi<=25?.45:.25)+weaponPow()+(SETUP.S-6)*.03+(m.cr.mod&&m.cr.mod[1]==="weak"?.2:0)+.12*Math.min(2,state.allies.length);m.odds=odds;
   if(o==="fight")return`${state.held?IT[state.held.id].n.split(" ")[0]:"Fists"} vs that.`;
   if(o==="still")return"Don't move.";
@@ -445,14 +481,16 @@ function resolveBeast(o){const m=state.modal,cr=m.cr,c=cells[m.c],nm=beastName(c
   const bite=(mult)=>{allyHarm(.3,`The ${cr.n.toLowerCase()} doesn't stop at you.`);const d=soften(Math.round(beastDmg(cr)*mult));state.hp-=d;state.pendingCause=`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm.toLowerCase()} found you in the ${here}.`;state.pendingKiller=null;
     if(cr.mod&&cr.mod[1]==="poison"){state.poison=3;state.poisonCause=`The ${nm.toLowerCase()}'s venom worked through you.`;fx.push(["poisoned","y"])}return d};
   if(o==="fight"){if(Math.random()<m.odds){c.creature=null;bite(.4);state.bread+=1;v=`You killed the ${cr.n}`;tone="gold";t=`It goes down thrashing. You're shaking, and bleeding a little, and alive. There's meat on it.`;fx.unshift(["− hurt","r"],["+ food","g"]);M(`You killed ${art(nm)} ${nm}.`)}
-    else{bite(1);state.bleed=true;v=`The ${cr.n} mauled you`;tone="red";t=`It's on you before you can swing. You tear free and run.`;fx.unshift(["badly hurt","r"],["bleeding","r"]);M(`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm} nearly killed you.`);if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}}
-  else if(o==="still"){if(!m.noticed&&Math.random()<.75){v="It passed you by";tone="green";t=`You don't breathe. The ${cr.n.toLowerCase()} sniffs the air, turns, and is gone into the ${here}.`;fx=[["unseen","b"]];const to=c.nb.map(n=>cells[n]).find(x=>!x.closed&&!x.creature&&x.i!==state.you);if(to){to.creature=cr;c.creature=null}}
+    else{bite(1);state.bleed=true;v=`The ${cr.n} mauled you`;tone="red";t=`It's on you before you can swing. You tear free and run.`;fx.unshift(["badly hurt","r"],["bleeding","r"]);M(`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm} nearly killed you.`);
+      if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);if(nb[0]){state.you=nb[0].i;views.forEach(v=>v.resetCam())}}else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}}
+  else if(o==="still"){const P=prof(cr);if(Math.random()<(m.noticed?P.still*.5:Math.max(.75,P.still))){v="It passed you by";tone="green";t=`You don't breathe. The ${cr.n.toLowerCase()} sniffs the air, turns, and is gone into the ${here}.`;fx=[["unseen","b"]];const to=c.nb.map(n=>cells[n]).find(x=>!x.closed&&!x.creature&&x.i!==state.you);if(to){to.creature=cr;c.creature=null}}
     else{bite(.8);v=`The ${cr.n} found you`;tone="red";t="Keeping still was a mistake. It was already looking at you.";fx.unshift(["− hurt","r"])}}
-  else{if(m.noticed&&Math.random()<.45){bite(.5);v="It caught you as you ran";tone="red";t=`Claws across your back, then you're out of the ${here}.`;fx.unshift(["− hurt","r"])}else{v="You got away";tone="amber";t=`You back out the way you came. Behind you, the ${cr.n.toLowerCase()} settles back into the ${here}.`;fx=[["safe","m"]]}
-    if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}
+  else{const P=prof(cr);if(Math.random()<(m.noticed?P.flee*(m.came?.7:1):P.flee*.3)){bite(.5);v="It caught you as you ran";tone="red";t=`Claws across your back, then you're out of the ${here}.`;fx.unshift(["− hurt","r"])}else{v="You got away";tone="amber";t=`You back out the way you came. Behind you, the ${cr.n.toLowerCase()} settles back into the ${here}.`;fx=[["safe","m"]]}
+    if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);const to=nb.find(x=>x.i===state.prev)||nb[0];if(to){state.you=to.i;to.seen=true;views.forEach(v=>v.resetCam())}}
+    else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}
   refreshSenses();L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
 function finishEnc(){const m=state.modal,r=m.res;state.modal=null;state.fx=r.fx;if(m.foe&&!m.foe.dead&&!m.foe.ally&&m.foe.at===state.you){const nb=cells[state.you].nb.filter(n=>!cells[n].closed&&!cells[n].closing);if(nb.length){const to=nb[Math.floor(Math.random()*nb.length)];(m.foe.pack?atCell(state.you).filter(x=>x.pack):[m.foe]).forEach(x=>x.at=to)}}presence();refreshSenses();if(state.hp<=0){die(state.pendingCause||"It was over before you knew it.");return rerenderAll()}if(m.free)return rerenderAll();advance()}
-state.sp={favor:0,gifts:0,lastKills:0};state.kills=0;
+READY=true;state.sp={favor:0,gifts:0,lastKills:0};state.kills=0;
 function dropAlly(a){state.allies=state.allies.filter(x=>x!==a);a.ally=false;a.suspicious=false}
 function partWays(name){const a=state.allies.find(x=>x.n===name);if(!a)return;dropAlly(a);const nb=cells[state.you].nb.filter(n=>!cells[n].closed&&!cells[n].closing);if(nb.length)a.at=nb[Math.floor(Math.random()*nb.length)];
   know(a,"friendly","parted on good terms");L(`You and ${a.n} split what you have and go separate ways. "Don't die," ${pr(a).s} says.`);M(`You parted ways with ${a.n}.`);state.modal=null;state.fx=[["parted ways","m"]];rerenderAll()}
@@ -475,13 +513,13 @@ function sleep(){const m=state.modal;
     else if(a.suspicious&&Math.random()<.5)a.suspicious=false}state.journal.push({d:state.day,t:m.n?`Night. In the sky: ${m.faces.map(f=>f.n).join(", ")}.`:"Night. No faces in the sky."});M(`You survived day ${state.day}.`);state.todayDead=[];
   const you0=cells[state.you];state.fx=[];
   if(m.cold){state.hp-=10;state.fx.push(["− the cold","b"]);L("The cold got into your bones in the night.");if(state.hp<=0){die(`The cold took you in the night, in the ${you0.name.toLowerCase()}.`);return rerenderAll()}}
-  state.day++;state.pi=0;state.phase=PH[0];state.modal=null;state.thirst=Math.min(3,state.thirst+(you0.hazard==="heat"?.5:.25));state.sheltered=false;
+  const wasSheltered=state.sheltered;state.day++;state.pi=0;state.phase=PH[0];state.modal=null;state.thirst=Math.min(3,state.thirst+(you0.hazard==="heat"?.5:.25));state.sheltered=false;
   const closingCount=cells.filter(c=>c.closing).length;
   cells.forEach(c=>{if(c.closing){c.closing=false;c.closed=true;c.creature=null;c.people=null}});
   {const quiet=!state.todayDead.length;state.todayDead=[];state.deaths=[];npcs().forEach(r=>{if(cells[r.at].closed)npcDeath(r,"closing")});state.closingList=state.deaths;state.deaths=[];
     if(quiet&&state.day>2){npcs().forEach(r=>r.aggr=Math.min(1,r.aggr+.12));L("A quiet day. The Gamemakers won't allow another.")}}
-  if(state.day>=3&&(state.day-3)%2===0){cells.filter(c=>!c.closed&&!c.closing&&c.i!==corn).sort((a,b)=>b.dc-a.dc).slice(0,4).forEach(c=>c.closing=true);
-    L("The Gamemakers mark the edge. Four places will be gone by tomorrow.");state.fx.push(["the arena shrinks","r"])}
+  if(state.day>=3&&(state.day-3)%2===0){const nClose=Math.max(4,Math.round(N/12));cells.filter(c=>!c.closed&&!c.closing&&c.i!==corn).sort((a,b)=>b.dc-a.dc).slice(0,nClose).forEach(c=>c.closing=true);
+    L(`The Gamemakers mark the edge. ${["Four","Five","Six","Seven","Eight","Nine","Ten"][Math.min(6,nClose-4)]} places will be gone by tomorrow.`);state.fx.push(["the arena shrinks","r"])}
   if(EVENT.on&&state.day>EVENT.end)endEvent();else if(EVENT.on&&EVENT.type==="fire")spreadFire();
   // mutts wander at night, new tributes move about
   cells.filter(c=>c.creature).forEach(c=>{if(Math.random()<.4){const to=c.nb.map(n=>cells[n]).find(x=>!x.closed&&!x.creature&&x.i!==state.you);if(to){to.creature=c.creature;c.creature=null}}});
@@ -493,6 +531,15 @@ function sleep(){const m=state.modal;
   if(state.closingList&&state.closingList.length){cannonsFrom(state.closingList,"closing")}state.closingList=null;
   state.allies.slice().forEach(a=>{if(!a.suspicious&&((state.hp<30&&Math.random()<.25)||(state.bread===0&&state.en<35&&Math.random()<.2))){dropAlly(a);know(a,"neutral","left you");if(state.bread>0)state.bread--;L(`${a.n} is gone in the morning. ${pr(a).S} took what food there was.`);state.fx.push([`${a.n} left`,"r"])}});
   L("Morning. Cold, and fewer of you.");
+  // the night belongs to the mutts
+  if(!state.dead&&!(state.beastDay>=state.day-2)){const cov=(sheltered(you)||wasSheltered)?.15:1;
+    const cand=cells.filter(c=>c.creature&&!c.closed&&c.i!==state.you).map(c=>({c,P:prof(c.creature),d:hops(c.i,state.you,3)})).filter(x=>x.d&&x.d<=Math.max(1,x.P.range));
+    const thief=cand.find(x=>x.c.creature.p==="skittish"&&x.d===1);
+    if(thief&&state.bread>0&&Math.random()<.3){state.bread--;L(`Something got into your food in the night. Tracks of ${art(thief.c.creature.n)} ${thief.c.creature.n.toLowerCase()}.`);state.fx.push(["− food","r"])}
+    const hit=cand.find(x=>Math.random()<x.P.night*cov*(state.camo>0?.5:1)*(state.bleed?1.5:1));
+    if(hit){const cr=hit.c.creature;hit.c.creature=null;you.creature=cr;state.beastDay=state.day;const watch=state.allies.length&&Math.random()<.6;
+      L(watch?`${state.allies[0].n} shakes you awake. Something is in the ${you.name.toLowerCase()}.`:`You wake to breathing that isn't yours.`);
+      presence();refreshSenses();startBeast(you,"night");if(watch)state.modal.noticed=false;state.modal.watch=watch?state.allies[0].n:null;return rerenderAll()}}
   const gift=state.dead?null:sponsorCheck();
   if(state.betrayed){const a=state.betrayed;state.betrayed=null;if(state.hp<=0){die(state.pendingCause);return rerenderAll()}state.modal={k:"betray",a};rerenderAll();return}
   if(gift){const got=addItem(gift);M(`Sponsors sent you ${got}.`);L(`A silver parachute drifts down at dawn: ${got}.`);state.modal={k:"gift",id:gift,got};rerenderAll();return}
@@ -501,30 +548,36 @@ function sleep(){const m=state.modal;
 
 // ---------- items (same catalogue as the real game's data/items.json) ----------
 const SV=(p)=>`<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const RO="#1a1213",RST=`stroke="${RO}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"`;
+const RPG=p=>`<svg class="rpg" viewBox="0 0 64 64" aria-hidden="true">${p}</svg>`;
+// item type → slot colour (weapons red, food & water green, medicine blue, gear amber, packs brown)
+const CAT={sword:"wpn",spear:"wpn",trident:"wpn",axe:"wpn",bow:"wpn",knife:"wpn",club:"wpn",fruit:"food",roots:"food",fish:"food",ration:"food",food:"food",bread:"food",bottle:"food",flask:"food",
+  band:"med",firstaid:"med",stim:"med",potion:"med",shield:"gear",camo:"gear",net:"gear",pack:"pack",bigpack:"pack",kit:"pack"};
+const catOf=id=>"cat-"+(CAT[id]||"pack")+(id==="ration"?" capitol":"");
 const ITEMIC={
-  club:SV('<path d="M3 13l6-6"/><path d="M9 7c0-2 1.5-4 3.5-4.2.2 2-1.8 3.7-3.5 4.2Z"/>'),
-  sword:SV('<path d="M13 3 6 10"/><path d="M13 3h-2.5M13 3v2.5"/><path d="M4.5 8.5l3 3M3 13l2.5-2.5"/>'),
-  spear:SV('<path d="M3 13 11.5 4.5"/><path d="M11.5 4.5 13.5 2.5l-.4 3-2.6.4z"/>'),
-  trident:SV('<path d="M4 13l6.5-6.5"/><path d="M8.5 4.5l3 3M10 3l3 3M10.5 6.5 13 4"/>'),
-  axe:SV('<path d="M4 13l6-6"/><path d="M8.5 4.5c2-.8 4.3.4 4.8 3-1.6-.3-3.2.2-4.4 1.2z"/>'),
-  bow:SV('<path d="M4 2.5c5 1 8.5 4.5 9.5 9.5"/><path d="M4 2.5 13.5 12"/><path d="M2.5 13.5 9 7"/>'),
-  knife:SV('<path d="M3 13l3-3"/><path d="M6 10l6.5-6.5c.8 2-1 5-4.5 6.5z"/>'),
-  shield:SV('<path d="M8 2.5 13 4.5v3.5c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4.5z"/>'),
-  camo:SV('<path d="M3 10c1.5-4 4-6 10-6-1 5-4 8-8 8"/><path d="M5 12c1-2 3-4 5-5"/>'),
-  net:SV('<path d="M3 3h10v10H3z"/><path d="M3 6.5h10M3 9.5h10M6.5 3v10M9.5 3v10"/>'),
-  potion:SV('<path d="M6.5 2.5h3M7 2.5v3L4.5 9.5a3 3 0 0 0 2.6 4h1.8a3 3 0 0 0 2.6-4L9 5.5v-3"/><path d="M5 10h6"/>'),
-  pack:SV('<path d="M4 6h8l-1 8H5z"/><path d="M6 6V4.5a2 2 0 0 1 4 0V6"/>'),
-  bigpack:SV('<path d="M3.5 5.5h9l-.8 8.5H4.3z"/><path d="M6 5.5V4a2 2 0 0 1 4 0v1.5"/><path d="M5.5 9h5"/>'),
-  band:SV('<rect x="2.5" y="5.5" width="11" height="5" rx="2.5" transform="rotate(-35 8 8)"/>'),
-  bread:SV('<path d="M3 9.5C3 6.5 5.2 4.5 8 4.5s5 2 5 5v2H3z"/>'),
-  flask:SV('<path d="M6 2.5h4M6.5 2.5v2L5 6.5v6.5h6V6.5L9.5 4.5v-2"/><path d="M5 9h6"/>'),
-  fruit:SV('<circle cx="6" cy="10" r="3"/><circle cx="10.5" cy="9.5" r="2.6"/><path d="M8 6.5c0-2 1-3 2.5-3.5"/>'),
-  roots:SV('<path d="M8 2.5v4M5.5 3.5 8 6.5l2.5-3"/><path d="M8 6.5c-2 0-3 1.5-3 3.5 0 2 1.5 3.5 3 3.5s3-1.5 3-3.5c0-2-1-3.5-3-3.5z"/>'),
-  fish:SV('<path d="M2.5 8c2-3 6-3.5 9-0-3 3.5-7 3-9 0z"/><path d="M11.5 8l2-2v4z"/>'),
-  firstaid:SV('<rect x="2.5" y="4.5" width="11" height="8.5" rx="1.5"/><path d="M8 6.5v4.5M5.8 8.75h4.4M6 4.5V3h4v1.5"/>'),
-  kit:SV('<rect x="2.5" y="5" width="11" height="8" rx="1"/><path d="M2.5 8h11M7 8v1.5h2V8"/>'),
-  stim:SV('<path d="M11 2.5l2.5 2.5M12.2 3.8 6 10l-2 .5.5-2 6.2-6.2M4.5 11.5 2.5 13.5M7.5 6.5l2 2"/>'),
-  ration:SV('<rect x="3" y="4.5" width="10" height="8" rx="1"/><path d="M3 7.5h10"/>')};
+  sword:RPG(`<g transform="rotate(45 32 32)"><path d="M28.5 6 32 1.5 35.5 6V40h-7z" fill="#cfd8e0" ${RST}/><path d="M32 4v35" stroke="#fff" stroke-opacity=".7" stroke-width="1.6"/><path d="M32 6V40h3.5V6z" fill="#8f9ba7" opacity=".55"/><rect x="19" y="39" width="26" height="6" rx="2" fill="#f2c14e" ${RST}/><rect x="29" y="45" width="6" height="11" fill="#7a4a26" ${RST}/><circle cx="32" cy="59" r="4" fill="#f2c14e" ${RST}/></g>`),
+  knife:RPG(`<g transform="rotate(40 32 32)"><path d="M29 10c7 4 8 18 6 26h-6z" fill="#d6dde3" ${RST}/><path d="M30.5 13c4 4 4.5 14 3.5 21" stroke="#fff" stroke-opacity=".6" stroke-width="1.4" fill="none"/><rect x="27" y="36" width="10" height="4" rx="1.5" fill="#5d5a57" ${RST}/><rect x="28.5" y="40" width="7" height="16" rx="3" fill="#8a5a33" ${RST}/><path d="M30 44h4M30 48h4M30 52h4" stroke="${RO}" stroke-width="1.4"/></g>`),
+  spear:RPG(`<g transform="rotate(45 32 32)"><rect x="30" y="18" width="4" height="44" rx="2" fill="#a26c3d" ${RST}/><path d="M32 1 38 14 32 20 26 14z" fill="#cfd8e0" ${RST}/><path d="M32 4v13" stroke="#fff" stroke-opacity=".7" stroke-width="1.4"/><rect x="28.5" y="19" width="7" height="4" fill="#5d5a57" ${RST}/></g>`),
+  trident:RPG(`<g transform="rotate(45 32 32)"><rect x="30" y="24" width="4" height="38" rx="2" fill="#2f7f88" ${RST}/><path d="M20 6v12c0 5 5 8 12 8s12-3 12-8V6" fill="none" stroke="${RO}" stroke-width="6"/><path d="M20 6v12c0 5 5 8 12 8s12-3 12-8V6" fill="none" stroke="#e6c35a" stroke-width="3"/><path d="M32 2v22" stroke="${RO}" stroke-width="6"/><path d="M32 2v22" stroke="#e6c35a" stroke-width="3"/><path d="M17 8l3-6 3 6M29 4l3-6 3 6M41 8l3-6 3 6" fill="#e6c35a" ${RST}/></g>`),
+  axe:RPG(`<g transform="rotate(30 32 32)"><rect x="29.5" y="10" width="5" height="50" rx="2.5" fill="#a26c3d" ${RST}/><path d="M34 12c10-4 18 2 18 12s-8 14-18 12z" fill="#cfd8e0" ${RST}/><path d="M46 15c3 3 3 12 0 16" stroke="#fff" stroke-opacity=".6" stroke-width="1.6" fill="none"/><rect x="28" y="14" width="8" height="6" fill="#5d5a57" ${RST}/></g>`),
+  club:RPG(`<g transform="rotate(40 32 32)"><path d="M28 60h8l3-36c2-8 1-18-7-20-8 2-9 12-7 20z" fill="#9a6034" ${RST}/><path d="M29 10c-2 5-1 12 1 16" stroke="#c88b55" stroke-width="2" fill="none"/><circle cx="35" cy="14" r="2" fill="#5e3a1d"/><circle cx="29" cy="22" r="1.6" fill="#5e3a1d"/><rect x="27" y="50" width="10" height="4" fill="#5e3a1d" ${RST}/></g>`),
+  bow:RPG(`<path d="M14 6c22 6 38 22 44 44" fill="none" stroke="${RO}" stroke-width="7" stroke-linecap="round"/><path d="M14 6c22 6 38 22 44 44" fill="none" stroke="#a26c3d" stroke-width="4" stroke-linecap="round"/><path d="M14 6 58 50" stroke="#e8e2d0" stroke-width="1.6"/><path d="M8 56 46 18" stroke="${RO}" stroke-width="4.5" stroke-linecap="round"/><path d="M8 56 46 18" stroke="#c9a46a" stroke-width="2"/><path d="M46 18l2-8 6 6z" fill="#cfd8e0" ${RST}/><path d="M8 56l-1-7 4 3zM8 56l7 1-3-4z" fill="#d9534f" ${RST}/>`),
+  shield:RPG(`<path d="M32 4 54 11v18c0 15-10 25-22 31C20 54 10 44 10 29V11z" fill="#8a5a33" ${RST}/><path d="M32 9 49 15v14c0 11-8 20-17 25-9-5-17-14-17-25V15z" fill="#b3372f"/><path d="M32 9v45" stroke="#e6c35a" stroke-width="4"/><path d="M15 26h34" stroke="#e6c35a" stroke-width="4"/><circle cx="32" cy="27" r="6" fill="#e6c35a" ${RST}/><path d="M20 15c3-1 7-2 9-2" stroke="#fff" stroke-opacity=".35" stroke-width="2" fill="none"/>`),
+  camo:RPG(`<path d="M18 22h28v30c0 4-3 6-6 6H24c-3 0-6-2-6-6z" fill="#cfd8e0" ${RST}/><rect x="16" y="14" width="32" height="9" rx="3" fill="#7a4a26" ${RST}/><path d="M18 30h28v22c0 4-3 6-6 6H24c-3 0-6-2-6-6z" fill="#4f7a34"/><path d="M22 38c4-3 6 2 10-1s7 2 10 0" stroke="#2f5021" stroke-width="2.4" fill="none"/><path d="M22 48c5-2 7 2 12 0" stroke="#7fb05a" stroke-width="2" fill="none"/><path d="M44 8c6 0 10 4 10 10-6 0-10-4-10-10z" fill="#6fbf4a" ${RST}/>`),
+  net:RPG(`<path d="M10 12h44v40H10z" fill="#e3d6b4" fill-opacity=".15" ${RST}/><path d="M10 22h44M10 32h44M10 42h44M21 12v40M32 12v40M43 12v40" stroke="#e3d6b4" stroke-width="2.4"/><path d="M10 22h44M10 32h44M10 42h44M21 12v40M32 12v40M43 12v40" stroke="${RO}" stroke-width=".8" opacity=".5"/><circle cx="10" cy="52" r="4" fill="#6c7078" ${RST}/><circle cx="54" cy="52" r="4" fill="#6c7078" ${RST}/><circle cx="32" cy="52" r="4" fill="#6c7078" ${RST}/>`),
+  potion:RPG(`<path d="M26 6h12v12l10 14c4 7 0 24-16 24S12 39 16 32l10-14z" fill="#9fd3e0" fill-opacity=".35" ${RST}/><path d="M17 36c6-4 24-4 30 0 2 9-3 18-15 18s-17-9-15-18z" fill="#6b5b8e"/><circle cx="26" cy="44" r="2.4" fill="#fff" opacity=".5"/><circle cx="36" cy="47" r="1.6" fill="#fff" opacity=".4"/><rect x="24" y="2" width="16" height="7" rx="2" fill="#a26c3d" ${RST}/><path d="M22 24c-2 3-4 6-5 9" stroke="#fff" stroke-opacity=".5" stroke-width="2" fill="none"/>`),
+  stim:RPG(`<g transform="rotate(45 32 32)"><rect x="25" y="14" width="14" height="30" rx="3" fill="#dfe6ea" ${RST}/><rect x="27.5" y="24" width="9" height="18" fill="#59e08a"/><rect x="22" y="44" width="20" height="5" rx="2" fill="#8e9aa6" ${RST}/><rect x="30" y="4" width="4" height="10" fill="#8e9aa6" ${RST}/><rect x="25" y="1" width="14" height="4" rx="1.5" fill="#8e9aa6" ${RST}/><path d="M32 49v12" stroke="${RO}" stroke-width="3"/><path d="M32 49v12" stroke="#cfd8e0" stroke-width="1.4"/></g>`),
+  band:RPG(`<path d="M12 24c0-8 8-14 18-14s18 6 18 14v16c0 8-8 14-18 14s-18-6-18-14z" fill="#f3efe4" ${RST}/><ellipse cx="30" cy="24" rx="18" ry="11" fill="#fffaf0" ${RST}/><ellipse cx="30" cy="24" rx="7" ry="4" fill="#d9cfb6" ${RST}/><path d="M48 36c4 2 6 6 4 12-3 6-8 6-12 4" fill="#f3efe4" ${RST}/><path d="M20 38h20" stroke="#d9534f" stroke-width="3"/>`),
+  bread:RPG(`<path d="M10 30c0-10 10-16 22-16s22 6 22 16-10 20-22 20S10 40 10 30z" fill="#8b4a2f" ${RST}/><path d="M16 26c6-6 24-8 32 2" stroke="#b7724a" stroke-width="3" fill="none"/><path d="M22 34c4 2 14 2 20-2" stroke="#5e2e1c" stroke-width="2.4" fill="none"/><path d="M8 44l12-4M56 44l-12-4" stroke="#d8c7a0" stroke-width="3"/><rect x="24" y="44" width="16" height="10" rx="2" fill="#d8c7a0" ${RST}/>`),
+  fruit:RPG(`<circle cx="24" cy="38" r="11" fill="#c0392b" ${RST}/><circle cx="40" cy="40" r="10" fill="#d4513e" ${RST}/><circle cx="32" cy="26" r="9" fill="#a93226" ${RST}/><circle cx="21" cy="34" r="3" fill="#fff" opacity=".35"/><circle cx="37" cy="36" r="2.5" fill="#fff" opacity=".35"/><path d="M32 17c0-6 4-10 10-11" stroke="#5e3a1d" stroke-width="3" fill="none"/><path d="M38 8c6-2 12 0 14 5-6 2-11 0-14-5z" fill="#6fbf4a" ${RST}/>`),
+  roots:RPG(`<path d="M26 18c-6 10-8 26-2 40 4-6 8-24 6-40z" fill="#e0893a" ${RST}/><path d="M38 20c6 10 6 24 0 36-4-6-6-22-4-36z" fill="#d97b2f" ${RST}/><path d="M24 30h5M23 40h5M36 32h4M36 42h4" stroke="${RO}" stroke-width="1.6"/><path d="M28 18c-4-6-10-8-14-6 2 5 8 8 14 6zM28 18c0-7 4-12 8-12 0 6-3 10-8 12zM36 20c4-6 10-7 14-5-3 5-8 7-14 5z" fill="#6fbf4a" ${RST}/>`),
+  fish:RPG(`<path d="M8 32c8-12 26-14 38-4l10-8v24l-10-8C34 46 16 44 8 32z" fill="#7fa9c9" ${RST}/><path d="M12 32c8-7 22-9 32-2" stroke="#c8deee" stroke-width="2.4" fill="none"/><circle cx="18" cy="30" r="2.6" fill="${RO}"/><path d="M28 24c2 4 2 12 0 16" stroke="#4e7899" stroke-width="2" fill="none"/>`),
+  ration:RPG(`<rect x="12" y="16" width="40" height="36" rx="5" fill="#cfd5dc" ${RST}/><ellipse cx="32" cy="16" rx="20" ry="5" fill="#e9edf1" ${RST}/><rect x="12" y="26" width="40" height="16" fill="#f2c14e"/><path d="M12 26h40M12 42h40" stroke="${RO}" stroke-width="2"/><path d="M32 28l2.5 5 5.5.8-4 3.9 1 5.4-5-2.6-5 2.6 1-5.4-4-3.9 5.5-.8z" fill="#fff8d6" ${RST}/><path d="M16 46h8" stroke="#fff" stroke-opacity=".6" stroke-width="2"/>`),
+  firstaid:RPG(`<rect x="8" y="18" width="48" height="36" rx="6" fill="#f3efe4" ${RST}/><rect x="24" y="10" width="16" height="9" rx="3" fill="none" stroke="${RO}" stroke-width="5"/><rect x="24" y="10" width="16" height="9" rx="3" fill="none" stroke="#b9b3ac" stroke-width="2.4"/><path d="M28 26h8v6h6v8h-6v6h-8v-6h-6v-8h6z" fill="#d9534f" ${RST}/><path d="M12 22h10" stroke="#fff" stroke-width="2"/>`),
+  kit:RPG(`<rect x="8" y="20" width="48" height="32" rx="4" fill="#6b7d4e" ${RST}/><rect x="8" y="20" width="48" height="10" fill="#7f9360" ${RST}/><rect x="18" y="26" width="8" height="8" rx="2" fill="#c9a24a" ${RST}/><rect x="38" y="26" width="8" height="8" rx="2" fill="#c9a24a" ${RST}/><rect x="24" y="12" width="16" height="9" rx="3" fill="none" stroke="${RO}" stroke-width="5"/><rect x="24" y="12" width="16" height="9" rx="3" fill="none" stroke="#8e9aa6" stroke-width="2.4"/><path d="M14 44h36" stroke="#4c5a37" stroke-width="2"/>`),
+  flask:RPG(`<rect x="16" y="16" width="32" height="40" rx="12" fill="#5f7d8c" ${RST}/><rect x="22" y="22" width="20" height="28" rx="8" fill="#7fa3b5"/><rect x="26" y="6" width="12" height="11" rx="2" fill="#8e9aa6" ${RST}/><path d="M16 30h32" stroke="#a26c3d" stroke-width="5"/><path d="M16 30h32" stroke="${RO}" stroke-width="1" opacity=".5"/><path d="M24 26c0 6 0 14 2 20" stroke="#fff" stroke-opacity=".45" stroke-width="2.4" fill="none"/>`),
+  pack:RPG(`<path d="M14 24c0-8 6-14 18-14s18 6 18 14v28c0 3-2 5-5 5H19c-3 0-5-2-5-5z" fill="#a8743f" ${RST}/><path d="M14 26c0-6 8-10 18-10s18 4 18 10v8H14z" fill="#c48a4d" ${RST}/><rect x="28" y="30" width="8" height="8" rx="2" fill="#e6c35a" ${RST}/><rect x="20" y="42" width="24" height="10" rx="3" fill="#8b5f33" ${RST}/><path d="M26 10c0-4 3-6 6-6s6 2 6 6" fill="none" stroke="${RO}" stroke-width="4"/>`),
+  bigpack:RPG(`<rect x="12" y="6" width="40" height="11" rx="5.5" fill="#5f7d6a" ${RST}/><path d="M12 11h40" stroke="#425a4b" stroke-width="1.6"/><path d="M10 26c0-7 6-11 22-11s22 4 22 11v26c0 4-3 6-6 6H16c-3 0-6-2-6-6z" fill="#8b5f33" ${RST}/><path d="M10 28c0-5 8-8 22-8s22 3 22 8v8H10z" fill="#a8743f" ${RST}/><rect x="28" y="32" width="8" height="8" rx="2" fill="#e6c35a" ${RST}/><rect x="15" y="42" width="14" height="11" rx="3" fill="#6e4a28" ${RST}/><rect x="35" y="42" width="14" height="11" rx="3" fill="#6e4a28" ${RST}/>`)};
 const IT={sword:{n:"Sword",k:"weapon",pow:.2},spear:{n:"Spear",k:"weapon",pow:.17},trident:{n:"Trident",k:"weapon",pow:.18},axe:{n:"Axe",k:"weapon",pow:.16},
   bow:{n:"Bow and arrows",k:"weapon",pow:.17},knife:{n:"Knife",k:"weapon",pow:.09},club:{n:"Club",k:"weapon",pow:.07},
   shield:{n:"Shield",k:"gear"},camo:{n:"Camouflage paste",k:"use"},net:{n:"Net",k:"use"},potion:{n:"Unlabelled flask",k:"use"},
@@ -565,7 +618,7 @@ function itemCard(id,attr,fresh){const d=IT[id];let tag="";
   if(d.k==="weapon")tag=`<span class="pw">${[1,2,3].map(k=>`<i class="${d.pow>[0,.08,.15][k-1]?"on":""}"></i>`).join("")}</span>`;
   else if(d.k==="pack"||id==="potion")tag=`<span class="q">?</span>`;
   const peek=(d.k==="pack"&&SETUP.P>=7)?`<small>${["Something long inside","It sloshes","Heavy","Soft, light"][[...attr].reduce((x,ch)=>x+ch.charCodeAt(0),0)%4]}</small>`:"";
-  return `<button class="li ${fresh?"fresh":""}" ${attr}>${icOf(id)}<b>${d.n}</b>${tag}${peek}</button>`}
+  return `<button class="li ${catOf(id)} ${fresh?"fresh":""}" ${attr}>${icOf(id)}<b>${d.n}</b>${tag}${peek}</button>`}
 function joinPack(){const m=state.modal;if(!CAREER_ME)state.weakLink=true;m.who.forEach(r=>{r.ally=true;r.at=state.you;state.allies.push(r);know(r,"ally","the Careers' pack")});L(`You join the Careers: ${m.who.map(r=>r.n).join(", ")}.`);M("You joined the Careers.");state.modal=null;state.fx=[["+ the Careers","g"]];rerenderAll()}
 function declinePack(){const m=state.modal;m.who.forEach(r=>know(r,"neutral","you turned down the pack"));L("You turn your back on the Careers. They'll remember.");state.modal=null;rerenderAll()}
 function openGround(mode){state.modal={k:"ground",mode,c:state.you};rerenderAll()}
@@ -587,10 +640,10 @@ function inventory(){const you=cells[state.you];const out=[];
   state.gear.forEach((g,i)=>{const d=IT[g.id];const held=state.held===g;const acts=[],free=[];
     if(d.k==="weapon")free.push(held?["unhold:"+i,"Put it away"]:["hold:"+i,"Take it in hand"]);
     if(g.id==="camo")acts.push(["camo:"+i,"Smear it on"]);if(g.id==="net")acts.push(["net:"+i,"Set it as a trap"]);if(g.id==="potion")acts.push(["potion:"+i,"Drink it"]);if(g.id==="stim")acts.push(["stim:"+i,"Inject it"]);
-    out.push({id:"g"+i,n:d.n,ic:icOf(g.id),held,sub:held?"In hand":d.k==="weapon"?"In your bag":g.id==="shield"?"Strapped to your arm. Blows land softer.":g.id==="potion"?"Could be medicine. Could be poison.":g.id==="camo"?"Mud-green, sticky.":g.id==="net"?"Strong cord, a few hooks.":"",acts,free})});
-  if(state.band>0)out.push({id:"band",n:"Bandages",ic:ITEMIC.band,q:state.band,sub:state.band>1?`${state.band} rolls`:"One roll left",acts:[["bandage",state.bleed?"Bind the wound":"Re-dress your wounds"]],free:[]});
-  if(state.bread>0)out.push({id:"bread",n:"Food",ic:ITEMIC.bread,q:state.bread,sub:state.bread>1?`Enough for ${state.bread} meals`:"One meal",acts:[["eat","Eat"]],free:[]});
-  if(state.flask>=0)out.push({id:"flask",n:"Water bottle",ic:ITEMIC.flask,dim:!state.flask,sub:state.flask?"Full":you.water?"Empty — there's water here":"Empty",acts:state.flask?[["drink","Drink"]]:you.water?[["drinkHere","Drink and fill it"]]:[],free:[]});
+    out.push({id:"g"+i,base:g.id,n:d.n,ic:icOf(g.id),held,sub:held?"In hand":d.k==="weapon"?"In your bag":g.id==="shield"?"Strapped to your arm. Blows land softer.":g.id==="potion"?"Could be medicine. Could be poison.":g.id==="camo"?"Mud-green, sticky.":g.id==="net"?"Strong cord, a few hooks.":"",acts,free})});
+  if(state.band>0)out.push({id:"band",base:"band",n:"Bandages",ic:ITEMIC.band,q:state.band,sub:state.band>1?`${state.band} rolls`:"One roll left",acts:[["bandage",state.bleed?"Bind the wound":"Re-dress your wounds"]],free:[]});
+  if(state.bread>0)out.push({id:"bread",base:"bread",n:"Food",ic:ITEMIC.bread,q:state.bread,sub:state.bread>1?`Enough for ${state.bread} meals`:"One meal",acts:[["eat","Eat"]],free:[]});
+  if(state.flask>=0)out.push({id:"flask",base:"flask",n:"Water bottle",ic:ITEMIC.flask,dim:!state.flask,sub:state.flask?"Full":you.water?"Empty — there's water here":"Empty",acts:state.flask?[["drink","Drink"]]:you.water?[["drinkHere","Drink and fill it"]]:[],free:[]});
   return out}
 const views=[];
 function rerenderAll(){try{presence();refreshSenses()}catch(e){}views.forEach(v=>v.render());state.fx=[];state.cannon=null;if(state.modal&&state.modal.k==='dead')state.modal.shown=true}
@@ -728,6 +781,7 @@ function makeView(root,isPhone){
     // HUD
     root.querySelector(".when").textContent=isPhone?`D${state.day} · ${state.phase}`:`Day ${state.day} · ${state.phase}`;
     root.querySelector(".alive").textContent=state.alive;
+    root.classList.toggle("low",state.hp<35&&!state.dead&&!state.won);root.classList.toggle("crit",state.hp<18&&!state.dead&&!state.won);
     root.querySelector(".evchip").innerHTML=EVENT.on?`<span title="${EVTXT[EVENT.type].n}: ${EVTXT[EVENT.type].hint}">${EVTXT[EVENT.type].ic}<em> ${EVTXT[EVENT.type].n}</em></span>`:"";
     root.querySelector(".arena").textContent=ARENA.name;
     root.querySelector(".allies").innerHTML=state.allies.map(a=>`<span class="al ${a.suspicious?"sus":""}" data-allyopen="${a.n}" title="${a.n}, District ${a.d} — your ally">${a.n[0]}</span>`).join("");
@@ -739,7 +793,7 @@ function makeView(root,isPhone){
     enb.style.width=state.en+"%";enb.style.background=state.en>50?"#4fbf6a":state.en>30?"#e9a23b":"#e8604f";
     const cw=conds();const words=[hpWord(),...cw.slice(0,2).map(c=>`<em class="c-${c[1]}">${c[0]}</em>`)].join(" · ")+(cw.length>2?` <em class="c-m">+${cw.length-2}</em>`:"");const wordsAll=[hpWord(),...cw.map(c=>`<em class="c-${c[1]}">${c[0]}</em>`)].join(" · ");
     root.querySelector(".words").innerHTML=words;root.querySelector(".words").title=cw.map(c=>c[0]).join(", ");root.querySelector(".pop").innerHTML=wordsAll;
-    const INV=inventory();const slotHTML=INV.map(it=>`<button class="slot2 ${it.held?"held":""} ${it.dim?"dim":""} ${openItem===it.id?"open":""}" data-item="${it.id}" title="${it.n}">${it.ic}${it.q>1?`<i>${it.q}</i>`:""}</button>`).join("")+Array.from({length:Math.max(0,5-INV.length)},()=>'<span class="slot2 empty"></span>').join("");
+    const INV=inventory();const slotHTML=INV.map(it=>`<button class="slot2 ${catOf(it.base)} ${it.held?"held":""} ${it.dim?"dim":""} ${openItem===it.id?"open":""}" data-item="${it.id}" title="${it.n}">${it.ic}${it.q>1?`<i>${it.q}</i>`:""}</button>`).join("")+Array.from({length:Math.max(0,5-INV.length)},()=>'<span class="slot2 empty"></span>').join("");
     root.querySelector(".carry").innerHTML=slotHTML;
     root.querySelector(".rh").innerHTML=PH.map((p,k)=>`<i class="${k<state.pi?"done":k===state.pi?"now":""}" title="${p}"></i>`).join("")+`<i class="moon">☾</i>`;
     root.querySelector(".when").textContent=isPhone?`D${state.day} · ${state.phase}`:`Day ${state.day} · ${state.phase}`;
@@ -761,17 +815,17 @@ function makeView(root,isPhone){
       bread:'<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 9.5C3 6.5 5.2 4.5 8 4.5s5 2 5 5v2H3z"/></svg>',
       water:'<svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M6 2.5h4M6.5 2.5v2L5 6.5v6.5h6V6.5L9.5 4.5v-2"/><path d="M5 9h6"/></svg>'};
     const item=(a,ic,name,verb,on,held)=>`<button class="item ${held?"held":""}" data-a="${a}" data-k="${a}" ${on?"":"disabled"}>${ic}<span>${name}</span><small>${verb}</small></button>`;
-    const traits=[];if(you.closing)traits.push(["Gone tonight","r"]);if(you.burning)traits.push(["Burning","r"]);if(you.hazard)traits.push([HAZ[you.hazard].n,HAZ[you.hazard].tone]);(you.tags||[]).forEach(t=>{if(TAGTXT[t])traits.push([TAGTXT[t][0],TAGTXT[t][2]])});
+    const traits=[];if(you.closing)traits.push(["Gone tonight","r"]);if(you.burning)traits.push(["Burning","r"]);if(you.hazard)traits.push([HAZ[you.hazard].n,HAZ[you.hazard].tone]);(you.tags||[]).forEach(t=>{if(TAGTXT[t])traits.push([TAGTXT[t][0],TAGTXT[t][2],TAGTXT[t][1]])});
     if(you.water)traits.push([you.water==="murky"?"Murky water":"Water","b"]);if(you.struct)traits.push([you.struct,"g"]);if(you.ration)traits.push(["Capitol ration","g"]);
-    const about=[];if(you.struct)about.push(STRUCTTXT[you.struct]);if(you.hazard)about.push(HAZ[you.hazard].t);else{const t=(you.tags||[]).find(t=>TAGTXT[t]);if(t)about.push(TAGTXT[t][1])}
-    const traitHTML=`<div class="traits">${traits.map(([n,c])=>`<span class="tr t${c}">${n}</span>`).join("")}</div>${about.length?`<p class="about">${about.slice(0,2).join(" ")}</p>`:""}`;
+    const about=[];if(you.struct)about.push(STRUCTTXT[you.struct]);if(you.hazard)about.push(HAZ[you.hazard].t);(you.tags||[]).filter(t=>TAGTXT[t]&&!(you.biome==="cornucopia"&&t==="rich")).forEach(t=>about.push(TAGTXT[t][1]));
+    const traitHTML=`<div class="traits">${traits.map(([n,c,tt])=>`<span class="tr t${c}" ${tt?`title="${tt}"`:""}>${n}</span>`).join("")}</div>${about.length?`<p class="about">${about.slice(0,2).join(" ")}</p>`:""}`;
     act.innerHTML=`${isPhone?"":`<div class="img" style="background-image:url(bg/${you.biome}.webp)"><b>${you.name}</b></div>`}<div class="body">${isPhone?"":traitHTML}
       ${isPhone?`<div class="phn">${you.name}</div>${traitHTML}`:""}
       <p class="intent ${it.u?"urgent":""}">${it.t}</p>
-      ${(()=>{if(!state.allies.length)return"";const a=state.allies[0];const b=you.nb.map(n=>cells[n]).find(c=>c.creature&&!c.closed);const st=you.nb.map(n=>cells[n]).find(c=>c.people==="steps");
+      ${(()=>{if(!state.allies.length)return"";const a=state.allies[0];const b=you.nb.map(n=>cells[n]).find(c=>c.creature&&!c.closed&&beastSeen(c));const st=you.nb.map(n=>cells[n]).find(c=>c.people==="steps");
         const tip=b?`"Something big, ${dirOf(you,b)}. Not that way."`:st?`"Someone's moving to the ${dirOf(you,st)}. Want to see who?"`:state.thirst>=2?`"I need water too."`:"";return tip?`<p class="allytip"><b>${a.n}:</b> ${tip}</p>`:""})()}
       <div class="btns">${optHTML}</div>
-      ${you.ground&&you.ground.some(g=>!g.hidden)?`<button class="onground" data-a="ground" data-k="ground"><span>On the ground</span>${you.ground.filter(g=>!g.hidden).map(g=>icOf(g.id)).join("")}<em>›</em></button>`:""}
+      ${you.ground&&you.ground.some(g=>!g.hidden)?`<button class="onground" data-a="ground" data-k="ground"><span>On the ground</span>${you.ground.filter(g=>!g.hidden).map(g=>`<span class="gi ${catOf(g.id)}">${icOf(g.id)}</span>`).join("")}<em>›</em></button>`:""}
       ${isPhone?'<p class="explore">Or tap any lit area to explore.</p>':`<div class="sec">Paths <span>· or click the map</span></div><div class="paths">${pathHTML}</div>`}
       ${stepsNb&&isPhone?`<div class="ctx ph1">Footsteps to the ${dirOf(you,stepsNb)}. <button data-a="call" data-k="call">Call out</button></div>`:""}
       ${stepsNb&&!isPhone?`<div class="ctx">Footsteps to the ${dirOf(you,stepsNb)}. Someone alone.<div class="r"><button data-a="call" data-k="call">Call out softly</button><button data-a="hide" data-k="hide">Stay quiet</button></div></div>`:""}
@@ -801,7 +855,7 @@ function makeView(root,isPhone){
     else if(m.k==="intro"){modal.innerHTML=`<div class="mcard intro"><div class="iimg" style="background-image:url(bg/${ARENA.dom||"arena"}.webp)"></div><div class="mt">The ${state.games||74}th Games</div><div class="aname">${ARENA.name}</div>
       <p class="res">${ARENA.line}</p><p class="res dim">You rise into the light at the Cornucopia. District ${SETUP.district}. ${SETUP.players} of you on the plates.${PARTNER?` Somewhere in the circle: ${PARTNER.n} ${PARTNER.last}, your district partner.`:""}${CAREER_ME?" You trained for this. The Careers will be looking for you.":""}</p><button class="mbtn c pri begin">Step off the plate</button></div>`}
     else if(m.k==="broadcast"){modal.innerHTML=`<div class="mcard bc"><div class="mt">The Capitol</div><p class="res big">“${m.t}”</p><p class="res warnl">${m.sub}</p><button class="mbtn c pri resume">Continue</button></div>`}
-    else if(m.k==="beast"){const cr=m.cr,nm=beastName(cr);modal.innerHTML=`<div class="mcard enc beast"><div class="claw"><svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="#ff8f7d" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">${ICON.beast}</svg></div><div class="mt">Something in the ${m.where.toLowerCase()}</div><div class="who">${nm}<span class="dist">Gamemaker mutt</span></div>
+    else if(m.k==="beast"){const cr=m.cr,nm=beastName(cr);modal.innerHTML=`<div class="mcard enc beast"><div class="claw"><svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="#ff8f7d" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">${ICON.beast}</svg></div><div class="mt">${m.came==="night"?`In the dark, in the ${m.where.toLowerCase()}`:m.came?`Something comes into the ${m.where.toLowerCase()}`:`Something in the ${m.where.toLowerCase()}`}</div><div class="who">${nm}<span class="dist">Gamemaker mutt</span></div>${m.watch?`<p class="res dim">${m.watch} woke you in time.</p>`:""}
       ${m.res?`<div class="verdict t-${m.res.tone}">${m.res.v}</div><p class="res">${m.res.t}</p><div class="fxrow">${m.res.fx.map(x=>`<span class="c-${x[1]}">${x[0]}</span>`).join("")}</div><button class="mbtn pri cont">Continue</button>`:
       `<div class="stance t-${m.noticed?"red":"amber"}"><b>${m.noticed?"It's seen you":"Unaware"}</b>${m.noticed?"Its head snaps toward you.":"It hasn't noticed you. Yet."}</div><div class="read">${m.read.map(r=>`<span>${r}</span>`).join("")}</div>`+
       ["fight","still","back"].map(o=>`<button class="mbtn" data-o="${o}">${o==="fight"?"Fight it":o==="still"?"Hold still":"Back away"}<small>${beastFore(o,m)}</small></button>`).join("")}</div>`}
@@ -838,7 +892,7 @@ function makeView(root,isPhone){
         <button class="mbtn" data-ao="stay">Stay together<small>Nothing changes.</small></button>
         <button class="mbtn" data-ao="part">Part ways<small>On good terms.</small></button>
         <button class="mbtn betrayb" data-ao="betray">Turn on ${pr(a).o}<small>${pr(a).S}'s not expecting it.</small></button></div>`}
-    else if(m.k==="gift"){modal.innerHTML=`<div class="mcard gift"><div class="chute">${icOf(m.id)}</div><div class="mt">A silver parachute</div><p class="res big">${m.got[0].toUpperCase()+m.got.slice(1)}.</p><p class="res dim">Someone out there is watching. And paying.</p><button class="mbtn c pri resume">Take it</button></div>`}
+    else if(m.k==="gift"){modal.innerHTML=`<div class="mcard gift"><div class="chute ${catOf(m.id)}">${icOf(m.id)}</div><div class="mt">A silver parachute</div><p class="res big">${m.got[0].toUpperCase()+m.got.slice(1)}.</p><p class="res dim">Someone out there is watching. And paying.</p><button class="mbtn c pri resume">Take it</button></div>`}
     else if(m.k==="pack"){modal.innerHTML=`<div class="mcard"><div class="mt">The Careers</div><p class="res big">${m.who.map(r=>r.n).join(", ")} wave you over to the horn.</p>${state.packWhy?`<p class="res dim">${state.packWhy}</p>`:""}
       <p class="res">${CAREER_ME?"“You're one of us. For now.”":"“You fight like one of us. Someone has to carry the packs.”"}</p>
       <p class="res dim">${CAREER_ME?"With them, few will dare to touch you. But the pack never lasts.":"You'd be the outsider — the first to go when it turns."}</p><button class="mbtn c pri joinpack">Join the Careers</button><button class="mbtn c declinepack">Go alone</button></div>`}
@@ -914,7 +968,7 @@ function makeView(root,isPhone){
     if(!it){pop.classList.remove("on");pop.innerHTML="";return}
     const fr=it.free.map(([a,l])=>`<button class="ia free" data-free="${a}">${l}<small>${forecastFree(a)}</small></button>`).join("");
     const ac=it.acts.map(([a,l])=>`<button class="ia" data-ia="${a}">${l}<small>${forecast(a)}</small></button>`).join("");
-    pop.innerHTML=`<div class="ih">${it.ic}<div><b>${it.n}</b><span>${it.sub}</span></div></div>${fr+ac||`<p class="inote">Nothing to do with it right now.</p>`}<button class="idrop" data-drop="${it.id}">Drop</button>`;
+    pop.innerHTML=`<div class="ih"><span class="slotbig ${catOf(it.base)}">${it.ic}</span><div><b>${it.n}</b><span>${it.sub}</span></div></div>${fr+ac||`<p class="inote">Nothing to do with it right now.</p>`}<button class="idrop" data-drop="${it.id}">Drop</button>`;
     pop.classList.add("on");
     if(!isPhone){const sl=root.querySelector(`.carry [data-item="${it.id}"]`);if(sl){const r=sl.getBoundingClientRect(),f=root.getBoundingClientRect();pop.style.left=Math.max(8,r.left-f.left-8)+"px"}}}
   function forecastFree(a){const [k,i]=a.split(":");const g=state.gear[+i];if(!g)return"";

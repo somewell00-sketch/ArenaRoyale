@@ -13,9 +13,12 @@ Open `index.html` (or `arena.html`) with a double-click. No server needed; keep 
 - **A living arena:** every tribute is on the map. They move each part of the day, scavenge, flee closing ground and fire, and fight each other using the classic engine's rules (district bias, Careers' soft alliance, aggression by district, weapons). Cannons come from real deaths; what you sense (footsteps, voices) is who is really there.
 - **Tributes:** real names by district, your district partner, Careers (districts 1–4) who hunt as a pack, alliances (allies walk with you and share the danger), warning signs and betrayal — both ways: tap an ally to part ways or turn on them, or slip away / strike at night. A tribute list shows who is alive and what you know about them.
 - **Sponsors:** the audience rewards surviving and boldness (kills, betrayals); a silver parachute brings what you need most.
+- **Items:** RPG-style icons; the slot colour tells the type at a glance (weapons red, food and water green, medicine blue, gear amber, packs brown).
+- **Mutts with personalities:** hunters follow your scent and blood, stalkers stay hidden until a good eye spots them, ambushers wait in place, brutes hold their ground, skittish ones raid your food at night. Hunters warn you before they come; any of them may find you at night unless you sleep under cover.
+- **Low health:** the screen's edge throbs with your pulse.
 - **Events:** storm, fog, fire or scarcity, announced by the Capitol.
-- **The arena closes:** from day 3, every two days, the four outermost areas are marked and vanish the next day. Anyone still there dies. The Cornucopia never closes.
-- **Endings:** a death screen with your story and how the games ended, or the victor screen.
+- **The arena closes:** from day 3, every two days, the outermost areas are marked (four, or more on big maps) and vanish the next day. Anyone still there dies. The Cornucopia never closes.
+- **Endings:** a death screen with your story and how the games ended, or the victor screen, plus a recap of how every tribute fell.
 
 Source: `play/template.html` + `play/arena.js`. Rebuild with `node tools/build-play.mjs` (needs `node_modules/d3-delaunay`).
 

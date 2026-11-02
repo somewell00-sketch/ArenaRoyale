@@ -537,6 +537,35 @@ html,body{height:100%;overflow:hidden}
 .rcp small{font-size:11px;color:var(--mute);text-align:right;line-height:1.3;white-space:nowrap}
 .rcp li.me{background:rgba(250,208,44,.06)}.rcp li.me b{color:var(--gold)}
 .rcp li.win .rk,.rcp li.win b{color:var(--gold)}
+
+/* item types: the slot colour says what it is */
+:root{--c-wpn:#e2574c;--c-food:#6cc06c;--c-med:#5aa8f0;--c-gear:#e9a93a;--c-pack:#b98552}
+.cat-wpn{--cc:var(--c-wpn)}.cat-food{--cc:var(--c-food)}.cat-med{--cc:var(--c-med)}.cat-gear{--cc:var(--c-gear)}.cat-pack{--cc:var(--c-pack)}
+svg.rpg{filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
+.slot2{width:34px;height:34px;border-radius:9px;border:1.5px solid color-mix(in srgb,var(--cc,#776) 70%,#000);
+  background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--cc,#776) 24%,#1d1718),#120e0f 75%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),inset 0 -5px 10px rgba(0,0,0,.4)}
+.slot2 svg.rpg{width:26px;height:26px}
+.slot2.held{box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 0 0 2px var(--gold)}
+.slot2.open,.slot2:hover{border-color:var(--cc,var(--gold));background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--cc,#776) 40%,#1d1718),#120e0f 80%)}
+.slot2.dim svg{opacity:.4}
+.slot2.capitol,.li.capitol,.chute.capitol{box-shadow:0 0 12px rgba(250,208,44,.5)}
+.drawer .slot2{width:48px;height:48px}.drawer .slot2 svg.rpg{width:36px;height:36px}
+.li{grid-template-columns:40px 1fr auto;border-color:color-mix(in srgb,var(--cc,#776) 45%,transparent);background:linear-gradient(90deg,color-mix(in srgb,var(--cc,#776) 10%,transparent),transparent 60%)}
+.li svg.rpg{width:36px;height:36px;margin:0;grid-row:span 2;align-self:center;padding:3px;border-radius:8px;background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--cc,#776) 26%,#1d1718),#120e0f 75%);border:1.5px solid color-mix(in srgb,var(--cc,#776) 65%,#000)}
+.li:hover{border-color:var(--cc,var(--gold))}
+.onground .gi{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:6px;border:1px solid color-mix(in srgb,var(--cc) 65%,#000);background:color-mix(in srgb,var(--cc) 18%,#141011)}
+.onground .gi svg{width:19px;height:19px}
+.ih .slotbig{flex:none;display:grid;place-items:center;width:44px;height:44px;border-radius:10px;border:1.5px solid color-mix(in srgb,var(--cc,#776) 70%,#000);background:radial-gradient(circle at 50% 38%,color-mix(in srgb,var(--cc,#776) 26%,#1d1718),#120e0f 75%)}
+.ih .slotbig svg{width:34px;height:34px}
+.mcard.gift .chute svg.rpg{width:44px;height:44px}
+
+/* low health: the edges of the screen throb with your pulse */
+.frame.game::after{content:"";position:absolute;inset:0;z-index:11;pointer-events:none;box-shadow:inset 0 0 140px 10px rgba(190,25,15,.6);opacity:0;transition:opacity .8s;will-change:opacity}
+.frame.game.low::after{animation:hb 1.5s ease-out infinite}
+.frame.game.crit::after{animation:hb .95s ease-out infinite;box-shadow:inset 0 0 170px 24px rgba(210,20,10,.7)}
+@keyframes hb{0%{opacity:.2}10%{opacity:.85}22%{opacity:.35}32%{opacity:.7}100%{opacity:.2}}
+.frame.game.low .hpb{background:#ff6a5a!important}
+@media (prefers-reduced-motion:reduce){.frame.game.low::after{animation:none;opacity:.5}}
 </style>
 </head>
 <body>
