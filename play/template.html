@@ -15,7 +15,10 @@ body{margin:0;background:#080607;color:var(--ink);font:13px/1.45 Inter,system-ui
 .frame.desk{width:min(1180px,calc(100vw - 32px));height:720px}
 .frame.phone{width:390px;max-width:calc(100vw - 32px);height:780px;border-radius:34px;border:8px solid #1d1819}
 svg.map{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
-.world.anim{transition:transform .5s cubic-bezier(.3,.7,.2,1)}
+.world.anim,.pw.anim,canvas.mapbg.anim{transition:transform .5s cubic-bezier(.3,.7,.2,1)}
+svg.pulse{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;animation:breathe 2.4s ease-in-out infinite;will-change:opacity}
+@keyframes breathe{0%,100%{opacity:.25}50%{opacity:1}}
+canvas.mapbg{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;will-change:transform}
 svg.map{cursor:grab}svg.map.drag{cursor:grabbing}
 .ctrl{position:absolute;right:12px;display:flex;flex-direction:column;gap:6px;z-index:5}
 .ctrl button{width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:rgba(13,11,12,.8);color:var(--soft);font:15px Inter,sans-serif;cursor:pointer;display:grid;place-items:center;backdrop-filter:blur(6px)}
@@ -79,7 +82,7 @@ svg.map{cursor:grab}svg.map.drag{cursor:grabbing}
 .menu button:hover{background:rgba(250,208,44,.08)}
 .menu button span{color:var(--mute);font-size:11px}
 .btns{position:relative}
-svg.map.night{filter:saturate(.7) brightness(.82) hue-rotate(-12deg)}
+
 
 /* Target preview pill */
 .peek{position:absolute;padding:8px 10px;background:rgba(12,10,11,.95);border:1px solid rgba(250,208,44,.3);border-radius:9px;font-size:12px;line-height:1.45;pointer-events:none;z-index:6;max-width:230px;display:none}
@@ -257,7 +260,7 @@ svg.map.night{filter:saturate(.7) brightness(.82) hue-rotate(-12deg)}
 @keyframes boom{0%{opacity:0;transform:translate(-50%,-6px) scale(1.08)}5%{opacity:1;transform:translate(-50%,0) scale(1)}88%{opacity:1}100%{opacity:0}}
 .alive.drop{display:inline-block;animation:drop 1.4s ease-out}
 @keyframes drop{0%{color:#ff8f7d;transform:scale(1.5)}100%{color:var(--ink);transform:none}}
-.frame.dead svg.map{filter:grayscale(1) brightness(.45);transition:filter 2s}
+.frame.dead svg.map,.frame.dead canvas.mapbg{filter:grayscale(1) brightness(.45);transition:filter 2s}
 .faces{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin:8px 0 4px}
 .face{display:flex;flex-direction:column;align-items:center;gap:3px;width:76px}
 .face svg{border-radius:50%;background:rgba(160,180,255,.08);box-shadow:0 0 18px rgba(160,180,255,.25)}
@@ -324,7 +327,7 @@ svg.map.night{filter:saturate(.7) brightness(.82) hue-rotate(-12deg)}
 .face span small{display:block;color:var(--mute);font-size:9.5px}
 .crown b i,.stand li i{font-style:normal;font-size:10.5px;color:var(--mute);font-weight:400}
 .menubtn{width:26px;height:26px}
-.title{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:linear-gradient(rgba(8,6,7,.55),rgba(8,6,7,.92)),url(bg/arena.png) center/cover;transition:opacity .7s}
+.title{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:linear-gradient(rgba(8,6,7,.55),rgba(8,6,7,.92)),url(bg/arena.webp) center/cover;transition:opacity .7s}
 .title.out{opacity:0}
 .tin{text-align:center;padding:24px}
 .tk{font:600 12px Rajdhani,sans-serif;letter-spacing:.3em;text-transform:uppercase;color:var(--mute)}
@@ -380,7 +383,7 @@ svg.map.night{filter:saturate(.7) brightness(.82) hue-rotate(-12deg)}
 .v-side .about{margin:6px 0 0;font-size:11.5px;font-style:italic;color:var(--soft);line-height:1.45}
 .v-side .intent.urgent{border-left-color:#ff8f7d;color:#ffd2ca}
 @keyframes burn{0%,100%{fill-opacity:.28}50%{fill-opacity:.5}}
-.burn{animation:burn 1.1s ease-in-out infinite;mix-blend-mode:screen}
+.burn{animation:burn 1.1s ease-in-out infinite}
 .wx{position:absolute;inset:0;pointer-events:none;z-index:2}
 .wx.storm{background:repeating-linear-gradient(105deg,rgba(170,190,230,.0) 0 14px,rgba(170,190,230,.16) 14px 15px);background-size:200px 200px;animation:rain .45s linear infinite;box-shadow:inset 0 0 160px rgba(20,30,60,.65)}
 @keyframes rain{to{background-position:-40px 200px}}
@@ -518,6 +521,22 @@ html,body{height:100%;overflow:hidden}
 .mcard.gift .chute{width:64px;height:64px;margin:0 auto 10px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(220,225,235,.5);background:radial-gradient(circle,rgba(220,225,235,.18),transparent 70%);box-shadow:0 0 40px rgba(220,225,235,.2);color:#e6e9f0;animation:drift 2.4s ease-in-out infinite}
 .mcard.gift .chute svg{width:30px;height:30px;margin:0}
 @keyframes drift{50%{transform:translateY(-5px)}}
+
+.phone *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.phone .wx.storm{animation:none}
+@media (prefers-reduced-motion:reduce){svg.pulse,.burn,.wx{animation:none!important}}
+
+.hud .menubtn{flex:none;margin-right:-6px}
+.recapbtn{width:100%;margin-top:12px}
+.mcard.obit,.mcard.recap{max-height:calc(100% - 24px);overflow:auto;overscroll-behavior:contain}
+.mcard.recap .rcp{list-style:none;margin:10px 0 14px;padding:0;display:flex;flex-direction:column}
+.rcp li{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:start;padding:9px 2px;border-top:1px solid var(--line)}
+.rcp .rk{font:600 13px Rajdhani,sans-serif;color:var(--mute);text-align:center;padding-top:1px}
+.rcp b{display:block;font-weight:500;font-size:13px}.rcp b i{font-style:normal;font-weight:400;color:var(--mute);font-size:11.5px}
+.rcp em{display:block;font-style:normal;font-size:12px;color:var(--soft);margin-top:1px}
+.rcp small{font-size:11px;color:var(--mute);text-align:right;line-height:1.3;white-space:nowrap}
+.rcp li.me{background:rgba(250,208,44,.06)}.rcp li.me b{color:var(--gold)}
+.rcp li.win .rk,.rcp li.win b{color:var(--gold)}
 </style>
 </head>
 <body>

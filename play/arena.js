@@ -117,18 +117,27 @@ const pr=f=>f.g==="f"?{s:"she",S:"She",o:"her",p:"her"}:{s:"he",S:"He",o:"him",p
 Object.assign(state,{fallen:[],todayDead:[],cannon:null,cause:null,place:null,moments:[],total:SETUP.players,allies:[]});
 
 const aliveR=()=>ROSTER.filter(r=>!r.dead);
+function recapRows(){const rows=state.fallen.map(r=>({n:r.n,dt:r.d,d:r.obit?r.obit.d:r.deadDay,p:r.obit?r.obit.p:"",how:r.obit?r.obit.how:"Fell",where:r.obit?r.obit.where:""}));
+  if(state.dead){const da=state.deathAt||{d:state.day,p:PH[state.pi],where:""};rows.push({n:"You",dt:SETUP.district,d:da.d,p:da.p,how:state.cause,where:da.where,me:true});
+    const e=state.end;if(e){e.standings.slice(1).reverse().forEach(x=>{const o=x;const ord=(e.order||[]).find(z=>z.r===x.r)||{};rows.push({n:x.r.n,dt:x.r.d,d:x.d,p:"",how:ord.how||"Fell",where:ord.where||""})});
+      rows.push({n:e.victor.n,dt:e.victor.d,d:e.lastDay,win:true,how:`Won the ${state.games||74}th Games`,where:""})}}
+  else rows.push({n:"You",dt:SETUP.district,d:state.day,win:true,me:true,how:`Won the ${state.games||74}th Games`,where:""});
+  return rows}
 function M(t){state.moments.push({d:state.day,p:PH[state.pi],t})}
-function kill(r){r.dead=true;r.deadDay=state.day;state.fallen.push(r);state.todayDead.push(r);state.alive--;if(r.ally){r.ally=false;state.allies=state.allies.filter(a=>a!==r);L(`${r.n} didn't come back.`);M(`You lost ${r.n}, your ally.`)}}
+function kill(r,how,where){r.dead=true;r.deadDay=state.day;r.obit={d:state.day,p:PH[state.pi],how:how||"Fell somewhere in the arena",where:where||(cells[r.at!=null?r.at:state.you]||{}).name};state.fallen.push(r);state.todayDead.push(r);state.alive--;if(r.ally){r.ally=false;state.allies=state.allies.filter(a=>a!==r);L(`${r.n} didn't come back.`);M(`You lost ${r.n}, your ally.`)}}
 function know(r,rel,note){r.know={rel,note,day:state.day,where:cells[state.you].name}}
 function nextFace(){const pool=aliveR().filter(r=>!(state.modal&&state.modal.foe===r));const r=pool[Math.floor(Math.random()*pool.length)];if(r)kill(r);return r}
 function ending(){const left=aliveR();const killer=state.pendingKiller;
   let victor=killer&&!killer.dead&&Math.random()<.5?killer:left[Math.floor(Math.random()*left.length)];
   const rest=left.filter(r=>r!==victor).sort(()=>Math.random()-.5);
   const lastDay=state.day+Math.max(1,Math.ceil(left.length/3));
-  const order=rest.map((r,k)=>({r,d:Math.min(lastDay,state.day+1+Math.floor(k/3)),where:cells[Math.floor(Math.random()*cells.length)].name}));
+  const open=cells.filter(c=>!c.closed);const order=rest.map((r,k)=>({r,d:Math.min(lastDay,state.day+1+Math.floor(k/3)),where:open[Math.floor(Math.random()*open.length)].name}));
+  order.forEach((o,k)=>{const later=[...order.slice(k+1).map(x=>x.r),victor];const by=k===order.length-1?victor:Math.random()<.7?later[Math.floor(Math.random()*later.length)]:null;
+    o.how=by?`Killed by ${by.n}`:["Taken by a mutt","Lost when the ground closed","Died of their wounds","Caught in the open by the Gamemakers"][Math.floor(Math.random()*4)];
+    if(k===order.length-1)o.how+=", in the final fight"});
   const standings=[{rank:1,r:victor,d:lastDay,win:true},...order.slice().reverse().map((o,k)=>({rank:k+2,r:o.r,d:o.d}))];
   let fate=null;if(killer){if(killer===victor)fate=`${killer.n} went on to win.`;else{const o=order.find(x=>x.r===killer);if(o)fate=`${killer.n} fell on day ${o.d}, in the ${o.where.toLowerCase()}.`;else if(killer.dead)fate=`${killer.n} was already gone.`}}
-  return{victor,lastDay,standings,fate}}
+  return{victor,lastDay,standings,fate,order}}
 function die(cause){state.cause=cause;state.place=state.alive;state.alive--;state.dead=true;state.end=ending();state.modal={k:"dead"};state.deathAt={d:state.day,p:PH[state.pi],where:cells[state.you].name}}
 const LBL={forage:"Forage",rest:"Rest",bandage:"Bandage",hide:"Hide",drinkHere:"Drink",drink:"Drink from the flask",eat:"Eat the bread",search:"Search the ground",climb:"Climb and look",snare:"Set a snare",call:"Call out softly",swap:"Put the club away",go:"Go",
   grab:"Grab a pack",loot:"Run for the supplies",leftovers:"Search the leftovers",cave:"Shelter in the cave",shelterIn:"Hole up in the shelter",oasis:"Drink at the oasis",fruit:"Pick fruit",ration:"Take the ration"};
@@ -336,9 +345,11 @@ function willFight(a,b){let s=.06+a.aggr*.22-a.caut*.12+Math.max(0,state.day-3)*
   const late=state.alive<=6;
   if(a.career&&b.career)s-=late?.0:.45;else if(a.career&&!b.career)s+=.2;else if(!a.career&&b.career)s-=.1;
   if(b.hurt)s+=.15;return Math.random()<Math.max(0,s)}
-function npcDeath(r,cause){kill(r);state.deaths.push({r,at:r.at,cause})}
+const HOW={fire:"Caught in the fire",fumes:"Choked on the fumes",closing:"Lost when the ground closed"};
+function npcDeath(r,cause,by){const how=cause==="fight"&&by?`Killed by ${by.n}${by.weapon&&by.weapon!=="bare hands"?`, ${by.weapon} in hand`:""}`:cause==="mutt"&&by?`Taken by ${art(beastName(by))} ${beastName(by).toLowerCase()}`:HOW[cause];
+  kill(r,how);state.deaths.push({r,at:r.at,cause})}
 function npcFight(a,b){const pa=.5+(a.str-b.str)+(a.wpow-b.wpow)*1.5+(b.hurt?.15:0)-(a.hurt?.15:0);const [w,l]=Math.random()<pa?[a,b]:[b,a];
-  if(Math.random()<.45||l.hurt){npcDeath(l,"fight");w.kills=(w.kills||0)+1;if(l.wpow>w.wpow){w.wpow=l.wpow;w.weapon=l.weapon}}else{l.hurt=true}}
+  if(Math.random()<.45||l.hurt){npcDeath(l,"fight",w);w.kills=(w.kills||0)+1;if(l.wpow>w.wpow){w.wpow=l.wpow;w.weapon=l.weapon}}else{l.hurt=true}}
 function stepToward(r,pred){const res=bfsTo(r.at,pred);return res?res.step:null}
 function npcTurn(){const you=state.you;state.deaths=state.deaths||[];
   const late=state.alive<=6;
@@ -358,7 +369,7 @@ function npcTurn(){const you=state.you;state.deaths=state.deaths||[];
     if(to!=null)r.at=to});
   // what happens where they stand
   cells.forEach(c=>{const ppl=atCell(c.i);if(!ppl.length)return;
-    if(c.creature&&Math.random()<.35){const v=ppl[Math.floor(Math.random()*ppl.length)];if(v.hurt||Math.random()<.45)npcDeath(v,"mutt");else v.hurt=true}
+    if(c.creature&&Math.random()<.35){const v=ppl[Math.floor(Math.random()*ppl.length)];if(v.hurt||Math.random()<.45)npcDeath(v,"mutt",c.creature);else v.hurt=true}
     if(c.burning)ppl.forEach(v=>{if(!v.dead&&Math.random()<.4)npcDeath(v,"fire")});
     if(c.hazard==="toxic")ppl.forEach(v=>{if(!v.dead&&Math.random()<.08)npcDeath(v,"fumes")});
     if(EVENT.on&&EVENT.type==="storm"&&c.tags.includes("exposed"))ppl.forEach(v=>{if(!v.dead&&Math.random()<.12)v.hurt=true});
@@ -406,7 +417,7 @@ function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(
     else{know(f,"neutral","said no to an alliance");v=`${f.n} says no`;tone="amber";t=`"Not today." ${P.S} backs away, watching you until ${P.s}'s gone.`;fx=[["no ally","m"]]}
     L(`${v}. ${t}`);m.res={v,tone,t,fx};return rerenderAll()}
   if(o==="fight"){if(Math.random()<winChance(f,m.disp)){if(state.day===1&&state.pi===0)state.bb.won=f.n;
-      if(Math.random()<.45){kill(f);state.kills++;state.hp-=8;state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`It's fast and ugly, and then it's over. A cannon, right above you. You take ${P.p} food and don't look back.`;fx=[["− hurt","r"],["+ food","g"]];M(`You killed ${f.n} of District ${f.d}.`)}
+      if(Math.random()<.45){kill(f,"Killed by you",cells[state.you].name);state.kills++;state.hp-=8;state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`It's fast and ugly, and then it's over. A cannon, right above you. You take ${P.p} food and don't look back.`;fx=[["− hurt","r"],["+ food","g"]];M(`You killed ${f.n} of District ${f.d}.`)}
       else{state.hp-=10;state.bread++;know(f,"hostile","you drove them off");v=`${f.n} ran`;tone="green";t=`You land the first blow. ${P.S} breaks and runs, leaving a pack behind.`;fx=[["− hurt","r"],["+ food","g"]];M(`You drove off ${f.n}.`)}}
     else{know(f,"hostile","nearly killed you");hurt(24,true,`${f.n} of District ${f.d} found you in the ${here}. The wound never closed.`);v=`${f.n} beat you`;tone="red";t=`The ${f.weapon==="bare hands"?"fists come":f.weapon+" comes"} faster than you thought. You get away, bleeding.`;fx=[["badly hurt","r"],["bleeding","r"]];M(`${f.n} nearly killed you.`)}}
   else if(o==="talk"){const r=Math.random();
@@ -445,10 +456,10 @@ state.sp={favor:0,gifts:0,lastKills:0};state.kills=0;
 function dropAlly(a){state.allies=state.allies.filter(x=>x!==a);a.ally=false;a.suspicious=false}
 function partWays(name){const a=state.allies.find(x=>x.n===name);if(!a)return;dropAlly(a);const nb=cells[state.you].nb.filter(n=>!cells[n].closed&&!cells[n].closing);if(nb.length)a.at=nb[Math.floor(Math.random()*nb.length)];
   know(a,"friendly","parted on good terms");L(`You and ${a.n} split what you have and go separate ways. "Don't die," ${pr(a).s} says.`);M(`You parted ways with ${a.n}.`);state.modal=null;state.fx=[["parted ways","m"]];rerenderAll()}
-function allyHarm(chance,how){state.allies.slice().forEach(a=>{if(Math.random()<chance){if(a.hurt&&Math.random()<.5){kill(a);state.cannon={dir:"near"};L(`${a.n} goes down beside you. ${how}`)}else{a.hurt=true;state.fx.push([`${a.n} is hurt`,"r"])}}})}
+function allyHarm(chance,how){state.allies.slice().forEach(a=>{if(Math.random()<chance){if(a.hurt&&Math.random()<.5){kill(a,"Died at your side, your ally",cells[state.you].name);state.cannon={dir:"near"};L(`${a.n} goes down beside you. ${how}`)}else{a.hurt=true;state.fx.push([`${a.n} is hurt`,"r"])}}})}
 function betrayAlly(name,asleep){const a=state.allies.find(x=>x.n===name);if(!a)return;const P=pr(a);const others=state.allies.filter(x=>x!==a);dropAlly(a);state.sp.favor+=2;
   const win=Math.min(.92,(asleep?.82:.55)+(SETUP.S-6)*.03+weaponPow()-(a.wpow||0)-(a.str-.5)*.6+(a.hurt?.15:0));let v,tone,t,fx=[];
-  if(Math.random()<win){if(Math.random()<(asleep?.85:.6)){kill(a);state.kills++;state.cannon={dir:"here",name:a.n};v=`You killed ${a.n}`;tone="gold";
+  if(Math.random()<win){if(Math.random()<(asleep?.85:.6)){kill(a,"Betrayed and killed by you, their ally",cells[state.you].name);state.kills++;state.cannon={dir:"here",name:a.n};v=`You killed ${a.n}`;tone="gold";
       t=asleep?`${P.S} never wakes. The cannon booms right over you, and the night goes very quiet.`:`${P.S} trusted you right up to the end. ${P.S} takes the surprise into the dark with ${P.o}.`;fx=[["+ the crowd","g"]];M(`You killed ${a.n}, your ally.`)}
     else{know(a,"hostile","you betrayed them");const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length)a.at=nb[0];a.hurt=true;v=`${a.n} got away`;tone="amber";t=`You draw blood, but ${P.s} twists free and runs, bleeding. ${P.S}'ll remember.`;fx=[["a new enemy","r"]];M(`You turned on ${a.n}.`)}}
   else{know(a,"hostile","you betrayed them");state.hp-=soften(20);state.bleed=true;state.pendingKiller=a;state.pendingCause=`You turned on ${a.n} of District ${a.d}. ${P.S} was faster.`;v=`${a.n} was ready`;tone="red";t=`${asleep?P.S+" was never really asleep.":P.S+" saw it in your eyes."} The ${a.weapon==="bare hands"?"fists come":a.weapon+" comes"} up before yours does.`;fx=[["badly hurt","r"],["bleeding","r"]];M(`You turned on ${a.n} — and it went wrong.`)}
@@ -587,9 +598,9 @@ function rerenderAll(){try{presence();refreshSenses()}catch(e){}views.forEach(v=
 // ---------- view ----------
 function makeView(root,isPhone){
   root.innerHTML=`
-  <svg class="map" xmlns="http://www.w3.org/2000/svg"><defs></defs><g class="world"></g></svg><svg class="tether"><path d="" fill="none" stroke="rgba(250,208,44,.75)" stroke-width="1.6" stroke-dasharray="4 4"/><circle r="3" fill="#fad02c"/></svg>
+  <canvas class="mapbg"></canvas><svg class="map" xmlns="http://www.w3.org/2000/svg"><defs></defs><g class="world"></g></svg><svg class="pulse" aria-hidden="true"><g class="pw"></g></svg><svg class="tether"><path d="" fill="none" stroke="rgba(250,208,44,.75)" stroke-width="1.6" stroke-dasharray="4 4"/><circle r="3" fill="#fad02c"/></svg>
   <header class="hud">
-    <div class="ava">D${SETUP.district}</div><div class="allies"></div>
+    <button class="iconbtn menubtn" aria-label="Pause" title="Pause"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><rect x="4" y="3.5" width="2.6" height="9" rx="1"/><rect x="9.4" y="3.5" width="2.6" height="9" rx="1"/></svg></button><div class="ava">D${SETUP.district}</div><div class="allies"></div>
     <div class="bars" tabindex="0" aria-label="Body and energy">
       <div class="bar"><i class="hpb"></i></div>
       <div class="bar"><i class="enb"></i></div>
@@ -598,7 +609,7 @@ function makeView(root,isPhone){
     <span class="words"></span>
     <span class="sep s1"></span>
     <span class="carry"></span>
-    <span class="arena"></span><div class="right"><span class="evchip"></span><span class="rh"></span><span class="when"></span><span><strong class="alive"></strong> alive</span><button class="iconbtn tribbtn" aria-label="Tributes" title="Tributes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="5.6" cy="5.4" r="1.9"/><circle cx="10.8" cy="6" r="1.5"/><path d="M2.4 12.6c.5-2.2 1.8-3.2 3.2-3.2s2.7 1 3.2 3.2"/><path d="M9.6 12.2c.4-1.6 1.1-2.4 2.1-2.4s1.7.8 2 2.4"/></svg></button><button class="iconbtn menubtn" aria-label="Menu"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 4.5h10M3 8h10M3 11.5h10"/></svg></button>
+    <span class="arena"></span><div class="right"><span class="evchip"></span><span class="rh"></span><span class="when"></span><span><strong class="alive"></strong> alive</span><button class="iconbtn tribbtn" aria-label="Tributes" title="Tributes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="5.6" cy="5.4" r="1.9"/><circle cx="10.8" cy="6" r="1.5"/><path d="M2.4 12.6c.5-2.2 1.8-3.2 3.2-3.2s2.7 1 3.2 3.2"/><path d="M9.6 12.2c.4-1.6 1.1-2.4 2.1-2.4s1.7.8 2 2.4"/></svg></button>
       ${isPhone?'<button class="iconbtn bag" aria-label="Inventory"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5h10l-1 9H4z"/><path d="M6 5V3.5a2 2 0 0 1 4 0V5"/></svg></button>':''}
     </div>
   </header>
@@ -610,7 +621,7 @@ function makeView(root,isPhone){
   <div class="peek"></div>
   <div class="ctrl"><button class="zin" title="Zoom in">+</button><button class="zout" title="Zoom out">−</button><button class="rec" title="Back to you"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="3"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg></button><button class="whole" title="Whole map"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg></button></div>
   <div class="hint">${isPhone?"Tap a lit area to look · tap again to go":"Hover a lit area to sense it · click to go"}</div>`;
-  const svg=root.querySelector("svg"),world=root.querySelector(".world"),defs=root.querySelector("defs");
+  const svg=root.querySelector("svg.map"),world=root.querySelector(".world"),pw=root.querySelector(".pw"),defs=root.querySelector("defs");
   const peek=root.querySelector(".peek"),act=root.querySelector(".act"),log=root.querySelector(".log");
   const hint=root.querySelector(".hint");
   hint.style.cssText=isPhone?"display:none":"right:56px;bottom:16px";
@@ -618,10 +629,22 @@ function makeView(root,isPhone){
   const uid=root.id;
   // patterns
   const biomes=[...new Set(cells.map(c=>c.biome))];
-  defs.innerHTML=biomes.map(b=>`<pattern id="${uid}-p-${b}" patternUnits="userSpaceOnUse" width="420" height="420"><image href="bg/${b}.png" width="420" height="420" preserveAspectRatio="xMidYMid slice"/></pattern>`).join("")+
-   `<pattern id="${uid}-hatch" patternUnits="userSpaceOnUse" width="12" height="12" patternTransform="rotate(45)"><rect width="12" height="12" fill="rgba(255,90,70,.06)"/><line x1="0" y1="0" x2="0" y2="12" stroke="rgba(255,120,100,.38)" stroke-width="3"/></pattern>
-    <filter id="${uid}-gray"><feColorMatrix type="saturate" values="0.15"/></filter>
+  defs.innerHTML=`<pattern id="${uid}-hatch" patternUnits="userSpaceOnUse" width="12" height="12" patternTransform="rotate(45)"><rect width="12" height="12" fill="rgba(255,90,70,.06)"/><line x1="0" y1="0" x2="0" y2="12" stroke="rgba(255,120,100,.38)" stroke-width="3"/></pattern>
     <radialGradient id="${uid}-void"><stop offset="0" stop-color="#050404"/><stop offset="1" stop-color="#0b0909"/></radialGradient>`;
+  // map textures live in one pre-painted canvas (moved by the GPU), not in the SVG
+  const bgc=root.querySelector(".mapbg"),KB=isPhone?1.15:1.6;bgc.width=Math.round(W*KB);bgc.height=Math.round(H*KB);bgc.style.width=W+"px";bgc.style.height=H+"px";
+  const bx=bgc.getContext("2d");const IMG={};let bgKey="",bgRaf=0;
+  function tex(b,far){const k=(far?"g/":"")+b;if(!IMG[k]){const im=new Image();im.decoding="async";im.onload=()=>{bgKey="";paintBg()};im.src=`bg/${k}.webp`;IMG[k]=im}return IMG[k]}
+  function paintBg(){if(bgRaf)return;bgRaf=requestAnimationFrame(()=>{bgRaf=0;
+    const you=cells[state.you],reach=new Set(you.nb.filter(n=>!cells[n].closed)),night=svg.classList.contains("night");
+    const key=state.you+"|"+night+"|"+cells.map(c=>c.closed?0:1).join("");if(key===bgKey)return;bgKey=key;
+    bx.setTransform(KB,0,0,KB,0,0);bx.clearRect(0,0,W,H);
+    cells.forEach(c=>{if(c.closed)return;const isYou=c.i===state.you,isR=reach.has(c.i),im=tex(c.biome,!(isYou||isR));
+      bx.save();bx.beginPath();c.poly.forEach(([x,y],k)=>k?bx.lineTo(x,y):bx.moveTo(x,y));bx.closePath();bx.clip();
+      if(im.complete&&im.naturalWidth){const m=Math.max(c.bw,c.bh)*1.25;bx.globalAlpha=isYou?1:isR?.9:.42;bx.drawImage(im,c.cx-m/2,c.cy-m/2,m,m)}
+      if(!isYou&&!isR){bx.globalAlpha=1;bx.fillStyle="rgba(10,8,9,.25)";bx.fill()}
+      bx.restore()});
+    if(night){bx.globalCompositeOperation="multiply";bx.fillStyle="rgb(165,160,190)";bx.fillRect(0,0,W,H);bx.globalCompositeOperation="source-over"}})}
   let sel=null; // phone: first tap
   let w=0,h=0;
   const Z0=(isPhone?1.05:1.35)*ZS;
@@ -631,7 +654,7 @@ function makeView(root,isPhone){
   function tx(){const you=cells[state.you],[ox,oy]=origin();return[ox+cam.px-you.cx*cam.z,oy+cam.py-you.cy*cam.z]}
   function toScreen(x,y){const [a,b]=tx();return[x*cam.z+a,y*cam.z+b]}
   let cardK=0,raf=0;
-  function applyCam(anim,rescore){world.classList.toggle("anim",!!anim);const [a,b]=tx();world.style.transform=`translate(${a}px,${b}px) scale(${cam.z})`;
+  function applyCam(anim,rescore){world.classList.toggle("anim",!!anim);bgc.classList.toggle("anim",!!anim);pw.classList.toggle("anim",!!anim);const [a,b]=tx();world.style.transform=pw.style.transform=bgc.style.transform=`translate(${a}px,${b}px) scale(${cam.z})`;
     if(rescore)pickSide(cam.z,a,b);
     cancelAnimationFrame(raf);
     if(anim){const t0=performance.now();const loop=()=>{follow();if(performance.now()-t0<560)raf=requestAnimationFrame(loop)};loop()}else follow();
@@ -676,11 +699,7 @@ function makeView(root,isPhone){
       const d=path(c.poly);
       if(c.closed){g+=`<path d="${d}" fill="url(#${uid}-void)" stroke="#0a0808" stroke-width="2"/>`;return}
       const isYou=c.i===state.you,isR=reach.has(c.i);
-      const op=isYou?1:isR?.9:.42;
-      const m=Math.max(c.bw,c.bh)*1.25,ix=c.cx-m/2,iy=c.cy-m/2;
-      g+=`<clipPath id="${uid}-c${c.i}"><path d="${d}"/></clipPath><image href="bg/${c.biome}.png" x="${ix}" y="${iy}" width="${m}" height="${m}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${uid}-c${c.i})" opacity="${op}" ${isYou||isR?"":`filter="url(#${uid}-gray)"`} pointer-events="none"/>`;
       g+=`<path class="cell ${isR?"reach":""}" data-i="${c.i}" d="${d}" fill="transparent" stroke="#0b0909" stroke-width="2"/>`;
-      if(!isYou&&!isR)g+=`<path d="${d}" fill="rgba(10,8,9,.25)" pointer-events="none"/>`;
       if(c.closing)g+=`<path d="${d}" fill="url(#${uid}-hatch)" pointer-events="none"/>`;
       if(c.burnt)g+=`<path d="${d}" fill="rgba(20,14,12,.72)" pointer-events="none"/>`;
       if(c.burning)g+=`<path class="burn" d="${d}" fill="#ff6a2a" pointer-events="none"/><path d="${d}" fill="none" stroke="#ffb067" stroke-width="2" pointer-events="none"/>`;
@@ -690,7 +709,7 @@ function makeView(root,isPhone){
     cells.filter(c=>!c.closed&&(c.struct||c.ration)&&(c.seen||reach.has(c.i)||c.i===state.you)).forEach(c=>{const k=c.struct==="Safe Cave"?"cave":c.struct==="Abandoned Shelter"?"shelterIn":c.struct==="Oasis"?"oasis":c.struct==="Fruit Tree"?"fruit":"ration";
       g+=`<g pointer-events="none" transform="translate(${c.cx+18} ${c.cy-18})"><rect x="-10" y="-10" width="20" height="20" rx="6" fill="rgba(12,10,11,.82)" stroke="#9bd59b" stroke-opacity=".7" stroke-width=".8"/><g transform="translate(-6 -6) scale(.75)" fill="none" stroke="#9bd59b" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">${AIC[k]}</g></g>`});
     // closing edges pulse
-    cells.filter(c=>c.closing).forEach(c=>{g+=`<path class="closing-edge" d="${path(c.poly)}" fill="none" stroke="#ff7a66" stroke-width="2" stroke-dasharray="7 6" pointer-events="none"/>`});
+    let pg="";cells.filter(c=>c.closing).forEach(c=>{g+=`<path d="${path(c.poly)}" fill="none" stroke="#ff7a66" stroke-opacity=".45" stroke-width="2" stroke-dasharray="7 6" pointer-events="none"/>`;pg+=`<path d="${path(c.poly)}" fill="none" stroke="#ff7a66" stroke-opacity=".5" stroke-width="2.4" stroke-dasharray="7 6"/>`});
     // trail
     if(state.trail.length){const t=[...state.trail,state.you].map(i=>cells[i]);g+=`<path d="M${t.map(c=>c.cx+","+c.cy).join("L")}" fill="none" stroke="rgba(250,208,44,.45)" stroke-width="2.5" stroke-dasharray="2 7" stroke-linecap="round" pointer-events="none"/>`}
     // lit neighbour rim + sense badges
@@ -699,7 +718,8 @@ function makeView(root,isPhone){
     const IT=intention();
     if(IT.a==="go"){const tc=cells[IT.to];g+=`<line x1="${you.cx}" y1="${you.cy}" x2="${tc.cx}" y2="${tc.cy}" stroke="#fad02c" stroke-opacity=".55" stroke-width="2" stroke-dasharray="2 6" stroke-linecap="round" pointer-events="none"/>`}
     // you
-    g+=`<path class="youfill" d="${path(you.poly)}" fill="#fad02c" pointer-events="none"/><path class="youedge" d="${path(you.poly)}" fill="none" stroke="#fad02c" stroke-width="2.6" stroke-linejoin="round" pointer-events="none"/>`;
+    g+=`<path d="${path(you.poly)}" fill="none" stroke="#fad02c" stroke-opacity=".55" stroke-width="2.6" stroke-linejoin="round" pointer-events="none"/>`;
+    pg+=`<path d="${path(you.poly)}" fill="#fad02c" fill-opacity=".12" stroke="#fad02c" stroke-opacity=".7" stroke-width="5" stroke-linejoin="round"/>`;pw.innerHTML=pg;
     state.allies.forEach((a,k)=>{const ang=2.4+k*0.9;const ax=you.cx+Math.cos(ang)*16,ay=you.cy+Math.sin(ang)*16;g+=`<g pointer-events="none"><circle cx="${ax}" cy="${ay}" r="4.5" fill="${a.suspicious?"#ff8f7d":"#9bd59b"}" stroke="#0b0909" stroke-width="1.2"/><title>${a.n}</title></g>`});
     g+=`<circle cx="${you.cx}" cy="${you.cy}" r="5.5" fill="#fad02c" stroke="#1b1400" stroke-width="1.5"/>`;
     g+=`<radialGradient id="${uid}-fog" gradientUnits="userSpaceOnUse" cx="${you.cx}" cy="${you.cy}" r="${EVENT.on&&EVENT.type==="fog"?340:520}"><stop offset="${EVENT.on&&EVENT.type==="fog"?.25:.38}" stop-color="#0b0909" stop-opacity="0"/><stop offset="1" stop-color="#0b0909" stop-opacity=".8"/></radialGradient><rect x="-400" y="-400" width="${W+800}" height="${H+800}" fill="url(#${uid}-fog)" pointer-events="none"/>`;
@@ -712,7 +732,7 @@ function makeView(root,isPhone){
     root.querySelector(".arena").textContent=ARENA.name;
     root.querySelector(".allies").innerHTML=state.allies.map(a=>`<span class="al ${a.suspicious?"sus":""}" data-allyopen="${a.n}" title="${a.n}, District ${a.d} — your ally">${a.n[0]}</span>`).join("");
     root.querySelector(".wx").className="wx "+(EVENT.on?EVENT.type:"");
-    svg.classList.toggle("night",state.phase==="Evening"||(state.modal&&state.modal.k==="night"));
+    svg.classList.toggle("night",state.phase==="Evening"||(state.modal&&state.modal.k==="night"));paintBg();
     // HUD state
     const hpb=root.querySelector(".hpb"),enb=root.querySelector(".enb");
     hpb.style.width=state.hp+"%";hpb.style.background=state.hp>60?"#4fbf6a":state.hp>35?"#e9a23b":"#e8604f";
@@ -745,7 +765,7 @@ function makeView(root,isPhone){
     if(you.water)traits.push([you.water==="murky"?"Murky water":"Water","b"]);if(you.struct)traits.push([you.struct,"g"]);if(you.ration)traits.push(["Capitol ration","g"]);
     const about=[];if(you.struct)about.push(STRUCTTXT[you.struct]);if(you.hazard)about.push(HAZ[you.hazard].t);else{const t=(you.tags||[]).find(t=>TAGTXT[t]);if(t)about.push(TAGTXT[t][1])}
     const traitHTML=`<div class="traits">${traits.map(([n,c])=>`<span class="tr t${c}">${n}</span>`).join("")}</div>${about.length?`<p class="about">${about.slice(0,2).join(" ")}</p>`:""}`;
-    act.innerHTML=`${isPhone?"":`<div class="img" style="background-image:url(bg/${you.biome}.png)"><b>${you.name}</b></div>`}<div class="body">${isPhone?"":traitHTML}
+    act.innerHTML=`${isPhone?"":`<div class="img" style="background-image:url(bg/${you.biome}.webp)"><b>${you.name}</b></div>`}<div class="body">${isPhone?"":traitHTML}
       ${isPhone?`<div class="phn">${you.name}</div>${traitHTML}`:""}
       <p class="intent ${it.u?"urgent":""}">${it.t}</p>
       ${(()=>{if(!state.allies.length)return"";const a=state.allies[0];const b=you.nb.map(n=>cells[n]).find(c=>c.creature&&!c.closed);const st=you.nb.map(n=>cells[n]).find(c=>c.people==="steps");
@@ -778,7 +798,7 @@ function makeView(root,isPhone){
       ${m.res?`<div class="verdict t-${m.res.tone}">${m.res.v}</div><p class="res">${m.res.t}</p><div class="fxrow">${m.res.fx.map(x=>`<span class="c-${x[1]}">${x[0]}</span>`).join("")}</div><button class="mbtn pri cont">Continue</button>`:
       `<div class="stance t-${DT[1]}"><b>${DT[0]}</b>${m.posture}</div><div class="read">${m.read.map(r=>`<span>${r}</span>`).join("")}</div>`+
       ["fight","talk","ally","slip"].map(o=>`<button class="mbtn ${o==="ally"?"allyb":""}" data-o="${o}">${o==="fight"?"Fight":o==="talk"?"Talk":o==="ally"?"Propose an alliance":"Slip away"}<small>${encFore(o,m)}</small></button>`).join("")}</div>`}
-    else if(m.k==="intro"){modal.innerHTML=`<div class="mcard intro"><div class="iimg" style="background-image:url(bg/${ARENA.dom||"arena"}.png)"></div><div class="mt">The ${state.games||74}th Games</div><div class="aname">${ARENA.name}</div>
+    else if(m.k==="intro"){modal.innerHTML=`<div class="mcard intro"><div class="iimg" style="background-image:url(bg/${ARENA.dom||"arena"}.webp)"></div><div class="mt">The ${state.games||74}th Games</div><div class="aname">${ARENA.name}</div>
       <p class="res">${ARENA.line}</p><p class="res dim">You rise into the light at the Cornucopia. District ${SETUP.district}. ${SETUP.players} of you on the plates.${PARTNER?` Somewhere in the circle: ${PARTNER.n} ${PARTNER.last}, your district partner.`:""}${CAREER_ME?" You trained for this. The Careers will be looking for you.":""}</p><button class="mbtn c pri begin">Step off the plate</button></div>`}
     else if(m.k==="broadcast"){modal.innerHTML=`<div class="mcard bc"><div class="mt">The Capitol</div><p class="res big">“${m.t}”</p><p class="res warnl">${m.sub}</p><button class="mbtn c pri resume">Continue</button></div>`}
     else if(m.k==="beast"){const cr=m.cr,nm=beastName(cr);modal.innerHTML=`<div class="mcard enc beast"><div class="claw"><svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="#ff8f7d" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">${ICON.beast}</svg></div><div class="mt">Something in the ${m.where.toLowerCase()}</div><div class="who">${nm}<span class="dist">Gamemaker mutt</span></div>
@@ -801,12 +821,16 @@ function makeView(root,isPhone){
         ${vis.length?`<div class="lgrid">${vis.map((g,i)=>itemCard(g.id,`data-take="${i}"`,g.fresh)).join("")}</div>`:`<p class="gone">${m.nothing?"Bare ground. Whatever was here is gone.":"Nothing left."}</p>`}
         ${c.ground.some(g=>g.hidden)&&m.mode!=="forage"?`<p class="res dim ghint">Something else might be buried here. Forage to look closer.</p>`:""}
         <div class="mrow"><button class="mbtn c pri gdone">${m.mode==="forage"||(m.took&&m.took.length)?"Done":"Leave it"}</button></div></div>`}
-    else if(m.k==="win"){modal.innerHTML=`<div class="mcard obit enter"><div class="obl" style="text-align:center"><div class="sky" style="box-shadow:0 0 60px rgba(250,208,44,.35)"><svg width="54" height="54" viewBox="0 0 16 16" fill="none" stroke="#fad02c" stroke-width="1" stroke-linejoin="round"><path d="M2.5 12.5h11L14 5l-3.5 3L8 3.5 5.5 8 2 5z"/></svg></div>
+    else if(m.k==="recap"){const rows=recapRows();
+      modal.innerHTML=`<div class="mcard trib recap"><div class="mt">The ${state.games||74}th Games</div><p class="res dim">Every tribute, in the order they fell.</p>
+        <ol class="rcp">${rows.map((r,k)=>`<li class="${r.win?"win":""} ${r.me?"me":""}"><span class="rk">${r.win?"♛":rows.length-k}</span><div><b>${r.n}${r.me?"":` <i>District ${r.dt}</i>`}</b><em>${r.how}${r.where?` · ${r.where}`:""}</em></div><small>Day ${r.d}${r.p?`<br>${r.p.toLowerCase()}`:""}</small></li>`).join("")}</ol>
+        <button class="mbtn c pri recapback">Back</button></div>`}
+    else if(m.k==="win"){modal.innerHTML=`<div class="mcard obit ${m.shown?"":"enter"}"><div class="obl" style="text-align:center"><div class="sky" style="box-shadow:0 0 60px rgba(250,208,44,.35)"><svg width="54" height="54" viewBox="0 0 16 16" fill="none" stroke="#fad02c" stroke-width="1" stroke-linejoin="round"><path d="M2.5 12.5h11L14 5l-3.5 3L8 3.5 5.5 8 2 5z"/></svg></div>
       <div class="mt">The victor</div><div class="aname">District ${SETUP.district}</div><p class="res">The last cannon fades. Trumpets. A hovercraft drops a ladder of light.</p>
       <div class="stats"><div><b>1st</b><span>of ${state.total}</span></div><div><b>${state.day}</b><span>days</span></div><div><b>${state.moments.filter(x=>/You killed/.test(x.t)).length}</b><span>kills</span></div></div>
       <div class="sec2">Your games</div><ol class="tl">${state.moments.slice(-6).map(x=>`<li><span>D${x.d}</span>${x.t}</li>`).join("")}</ol></div>
       <div class="obr"><div class="sec2">Those who fell</div><div class="after">${state.fallen.slice(-12).reverse().map(r=>`<span>† ${r.n} <i style="color:var(--mute);font-style:normal">${r.d}</i></span>`).join("")}</div>
-      <div class="mrow"><button class="mbtn c totitle">New setup</button><button class="mbtn pri restart">Play again</button></div></div></div>`}
+      <button class="mbtn c recapbtn">What happened to everyone</button><div class="mrow"><button class="mbtn c totitle">New setup</button><button class="mbtn pri restart">Play again</button></div></div></div>`}
     else if(m.k==="pushed"){modal.innerHTML=`<div class="mcard"><div class="mt">The arena closed</div><p class="res big">In the dark, the ${m.pz.from.toLowerCase()} fell away under you.</p><p class="res">You clawed your way into the ${m.pz.to.toLowerCase()}.</p><div class="fxrow"><span class="c-r">− hurt</span></div><p class="res dim">Areas marked with red stripes close at night. Stay inside.</p><button class="mbtn c pri resume">Continue</button></div>`}
     else if(m.k==="allyopts"){const a=ROSTER.find(x=>x.n===m.n);if(!m.res&&!state.allies.includes(a)){state.modal=null;return renderModal()}
       modal.innerHTML=m.res?`<div class="mcard enc">${SIL}<div class="who">${a.n}</div><div class="verdict t-${m.res.tone}">${m.res.v}</div><p class="res">${m.res.t}</p><button class="mbtn pri resume">Continue</button></div>`:
@@ -854,7 +878,7 @@ function makeView(root,isPhone){
           if(me>4)rows.push(`<li class="me"><span>${me}</span>You<em>day ${state.deathAt?state.deathAt.d:state.day}</em></li>`);
           return rows.join("")})()}</ol>
         ${state.end.fate?`<p class="fate">${state.end.fate}</p>`:""}
-        <div class="mrow"><button class="mbtn c totitle">New setup</button><button class="mbtn pri restart">Try again</button></div></div></div>`}}
+        <button class="mbtn c recapbtn">What happened to everyone</button><div class="mrow"><button class="mbtn c totitle">New setup</button><button class="mbtn pri restart">Try again</button></div></div></div>`}}
   function spawnFx(){const fx=state.fx.slice();if(!fx.length)return;
     setTimeout(()=>{const you=cells[state.you];const m=new DOMMatrixReadOnly(getComputedStyle(world).transform);const sx=you.cx*m.a+m.e,sy=you.cy*m.d+m.f;
       fx.forEach((f,k)=>setTimeout(()=>{const el=document.createElement("div");el.className="fl c-"+f[1];el.textContent=f[0];el.style.left=sx+"px";el.style.top=(sy-22-k*26)+"px";fls.appendChild(el);setTimeout(()=>el.remove(),1900)},k*380))},520)}
@@ -881,6 +905,8 @@ function makeView(root,isPhone){
     if(e.target.closest(".lhide")){state.modal=null;return perform("hide")}
     if(e.target.closest(".cont"))return finishEnc();if(e.target.closest(".sleep"))return sleep();if(e.target.closest(".restart")){location.hash="play";return location.reload()}
     if(e.target.closest(".totitle")){location.hash="";return location.reload()}
+    if(e.target.closest(".recapbtn")){state.modal.shown=true;state.modal={k:"recap",back:state.modal};return rerenderAll()}
+    if(e.target.closest(".recapback")){state.modal=state.modal.back;state.modal.shown=true;return rerenderAll()}
     if(e.target.closest(".resume")||e.target.closest(".begin")){state.modal=null;return rerenderAll()}
     if(e.target.closest(".leave")){state.modal.confirm=true;return rerenderAll()}});
   let openItem=null;
