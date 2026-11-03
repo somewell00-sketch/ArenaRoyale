@@ -9,6 +9,7 @@ const safe = (s) => s.replace(/<\/script/gi, "<\\/script");
 const tpl = readFileSync(join(root, "play/template.html"), "utf8");
 const d3 = readFileSync(join(root, "node_modules/d3-delaunay/dist/d3-delaunay.min.js"), "utf8");
 const game = readFileSync(join(root, "play/arena.js"), "utf8");
-const html = tpl.replace("<!--LIBS-->", `<script>${safe(d3)}</script>\n<script>${safe(game)}</script>`);
+const mentor = readFileSync(join(root, "play/mentor.js"), "utf8");
+const html = tpl.replace("<!--LIBS-->", `<script>${safe(d3)}</script>\n<script>${safe(game)}</script>\n<script>${safe(mentor)}</script>`);
 for (const f of ["index.html", "arena.html"]) writeFileSync(join(root, f), html);
 console.log("Wrote index.html + arena.html (" + Math.round(html.length / 1024) + " KB)");

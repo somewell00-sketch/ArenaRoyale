@@ -8,6 +8,7 @@ Open `index.html` (or `arena.html`) with a double-click. No server needed; keep 
 - **Setup:** pick your district (each district sets starting Strength, Dexterity and Perception; you can still adjust them), arena size and number of tributes.
 - **Arenas:** 70% are themed (Himani, Sahari, Mayu…) with one dominant biome; the rest are Survival Arenas. Every area has a personality (exposed, sheltered, scavenged, quiet), biome risks (heat, cold, flooded, fumes, loose ground), structures (Safe Cave, Oasis, Fruit Tree, Abandoned Shelter) and Gamemaker mutts.
 - **Day rhythm:** morning, afternoon, evening — each action spends one — then night: cannons and faces in the sky.
+- **The mentor:** short one-line tips the first time things happen, with the relevant areas or buttons lit up; switch it on or off on the setup screen (turning it back on replays the tips). The pause menu has a one-page "How the Games work". Day 1 is gentler: no mutt comes for you until day 2.
 - **Body-driven guidance:** one line tells you what matters now; hovering an action shows what it will cost.
 - **The Cornucopia:** loot in three rings (at your feet / on the way in / at the horn) with rising risk; sealed packs; leftovers for later days. Items come from the real catalogue (swords, bows, shield, camouflage, nets, unlabelled flasks…).
 - **A living arena:** every tribute is on the map. They move each part of the day, scavenge, flee closing ground and fire, and fight each other using the classic engine's rules (district bias, Careers' soft alliance, aggression by district, weapons). Cannons come from real deaths; what you sense (footsteps, voices) is who is really there.
@@ -21,7 +22,7 @@ Open `index.html` (or `arena.html`) with a double-click. No server needed; keep 
 - **The arena closes:** from day 3, every two days, the outermost areas are marked (four, or more on big maps) and vanish the next day. Anyone still there dies. The Cornucopia never closes.
 - **Endings:** a death screen with your story and how the games ended, or the victor screen, plus a recap of how every tribute fell.
 
-Source: `play/template.html` + `play/arena.js`. Rebuild with `node tools/build-play.mjs` (needs `node_modules/d3-delaunay`).
+Source: `play/template.html` + `play/arena.js` + `play/mentor.js`. Rebuild with `node tools/build-play.mjs` (needs `node_modules/d3-delaunay`).
 
 ## The classic game
 The original simulator (full NPC AI, combat engine, items and traps) is kept:

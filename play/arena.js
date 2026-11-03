@@ -483,7 +483,7 @@ function muttsMove(){const you=cells[state.you];let came=null;const tick=state.d
     if(d&&state.day>=2&&Math.random()<P.hunt+(state.bleed?.2:0)+(state.stayed>=2?.15:0)+(cr.close?.15:0))to=stepTo(c.i,state.you);
     else if(P.wander&&Math.random()<P.wander){const nb=c.nb.filter(n=>!cells[n].closed);to=nb[Math.floor(Math.random()*nb.length)]}
     if(to==null)return;const t=cells[to];
-    if(to===state.you){const sneaky=cr.p==="stalker";if((cr.close||sneaky)&&!came&&!(state.beastDay>=state.day-1)&&state.pi<2&&!(state.lastHid&&Math.random()<.5)&&!(state.day<=2&&to===corn))came=c;return}
+    if(to===state.you){const sneaky=cr.p==="stalker"&&state.day>=2;if((cr.close||sneaky)&&!came&&!(state.beastDay>=state.day-1)&&state.pi<2&&!(state.lastHid&&Math.random()<.5)&&!(state.day<=2&&to===corn))came=c;return}
     if(t.closed||t.closing||t.creature||t.burning||(state.day<=2&&to===corn))return;
     t.creature=cr;c.creature=null;cr.moved=tick});
   if(came){const cr=came.creature;came.creature=null;you.creature=cr;cr.moved=tick;state.beastDay=state.day;cr.close=false;return you}
@@ -554,7 +554,7 @@ function sleep(){const m=state.modal;
   state.allies.slice().forEach(a=>{if(!a.suspicious&&((state.hp<30&&Math.random()<.25)||(state.bread===0&&state.en<35&&Math.random()<.2))){dropAlly(a);know(a,"neutral","left you");if(state.bread>0)state.bread--;L(`${a.n} is gone in the morning. ${pr(a).S} took what food there was.`);state.fx.push([`${a.n} left`,"r"])}});
   L("Morning. Cold, and fewer of you.");
   // the night belongs to the mutts
-  if(!state.dead&&!(state.beastDay>=state.day-2)){const cov=(sheltered(you)||wasSheltered)?.15:1;
+  if(!state.dead&&state.day>=3&&!(state.beastDay>=state.day-2)){const cov=(sheltered(you)||wasSheltered)?.15:1;
     const cand=cells.filter(c=>c.creature&&!c.closed&&c.i!==state.you).map(c=>({c,P:prof(c.creature),d:hops(c.i,state.you,3)})).filter(x=>x.d&&x.d<=Math.max(1,x.P.range));
     const thief=cand.find(x=>x.c.creature.p==="skittish"&&x.d===1);
     if(thief&&state.bread>0&&Math.random()<.3){state.bread--;L(`Something got into your food in the night. Tracks of ${art(thief.c.creature.n)} ${thief.c.creature.n.toLowerCase()}.`);state.fx.push(["− food","r"])}
@@ -836,7 +836,7 @@ function makeView(root,isPhone){
     root.querySelector(".words").innerHTML=words;root.querySelector(".words").title=cw.map(c=>c[0]).join(", ");root.querySelector(".pop").innerHTML=wordsAll;
     const INV=inventory();const slotHTML=INV.map(it=>`<button class="slot2 ${catOf(it.base)} ${it.held?"held":""} ${it.dim?"dim":""} ${openItem===it.id?"open":""}" data-item="${it.id}" title="${it.n}">${it.ic}${it.q>1?`<i>${it.q}</i>`:""}</button>`).join("")+Array.from({length:Math.max(0,5-INV.length)},()=>'<span class="slot2 empty"></span>').join("");
     root.querySelector(".carry").innerHTML=slotHTML;
-    {const bb=root.querySelector(".bagbtn");if(bb){const n=INV.length;const prev=+(bb.dataset.n||0);bb.dataset.n=n;const bn=bb.querySelector(".bagn");bn.textContent=n;bn.style.display=n?"":"none";
+    {const bb=root.querySelector(".bagbtn");if(bb){const n=INV.length;const prev=+(bb.dataset.n||0);bb.dataset.n=n;const bn=bb.querySelector(".bagn");bn.textContent=n;bn.style.display=n?"":"none";bb.classList.toggle("empty",!n);bb.disabled=!n;bb.title=n?"Your bag":"Your bag is empty";if(!n){const d=root.querySelector(".drawer");if(d)d.classList.remove("on")}
       if(n>prev){bb.classList.remove("new");void bb.offsetWidth;bb.classList.add("new")}}}
     root.querySelector(".rh").innerHTML=PH.map((p,k)=>`<i class="${k<state.pi?"done":k===state.pi?"now":""}" title="${p}"></i>`).join("")+`<i class="moon">☾</i>`;
     root.querySelector(".when").textContent=isPhone?`D${state.day} · ${state.phase}`:`Day ${state.day} · ${state.phase}`;
