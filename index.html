@@ -566,6 +566,20 @@ svg.rpg{filter:drop-shadow(0 1px 1px rgba(0,0,0,.6))}
 @keyframes hb{0%{opacity:.2}10%{opacity:.85}22%{opacity:.35}32%{opacity:.7}100%{opacity:.2}}
 .frame.game.low .hpb{background:#ff6a5a!important}
 @media (prefers-reduced-motion:reduce){.frame.game.low::after{animation:none;opacity:.5}}
+
+/* phone: the bag sits with you — next to your face and your body */
+.bagbtn{flex:none;position:relative;width:38px;height:38px;margin-left:2px;border-radius:11px;padding:0;cursor:pointer;display:grid;place-items:center;
+  border:1.5px solid #b98552;background:radial-gradient(circle at 50% 38%,rgba(185,133,82,.35),#140f10 75%);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 0 10px rgba(185,133,82,.25)}
+.bagbtn svg.rpg{width:32px;height:32px}
+.bagbtn .bagn{position:absolute;right:-5px;top:-5px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#fad02c;color:#1b1400;font:700 11px/18px Inter,sans-serif;font-style:normal;box-shadow:0 0 0 2px #120e0f}
+.bagbtn.new{animation:bagpop .7s cubic-bezier(.2,.8,.2,1)}
+@keyframes bagpop{0%{transform:scale(1)}35%{transform:scale(1.22)}100%{transform:scale(1)}}
+.phone .hud{height:48px;gap:7px}
+.phone .hud .bars{flex:0 1 70px}
+.phone .hud .rh{display:none}
+.alv em{font-style:normal}
+@media (max-width:400px){.phone .alv em{display:none}.phone .alv::after{content:" ☠";display:none}.phone .hud .when{font-size:12px}}
+.phone .log{top:64px}.phone .drawer{top:64px}
 </style>
 </head>
 <body>
@@ -1287,12 +1301,11 @@ function makeView(root,isPhone){
       <div class="bar"><i class="hpb"></i></div>
       <div class="bar"><i class="enb"></i></div>
       <div class="pop"></div>
-    </div>
+    </div>${isPhone?`<button class="bagbtn" aria-label="Your bag" title="Your bag">${ITEMIC.pack}<i class="bagn"></i></button>`:""}
     <span class="words"></span>
     <span class="sep s1"></span>
     <span class="carry"></span>
-    <span class="arena"></span><div class="right"><span class="evchip"></span><span class="rh"></span><span class="when"></span><span><strong class="alive"></strong> alive</span><button class="iconbtn tribbtn" aria-label="Tributes" title="Tributes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="5.6" cy="5.4" r="1.9"/><circle cx="10.8" cy="6" r="1.5"/><path d="M2.4 12.6c.5-2.2 1.8-3.2 3.2-3.2s2.7 1 3.2 3.2"/><path d="M9.6 12.2c.4-1.6 1.1-2.4 2.1-2.4s1.7.8 2 2.4"/></svg></button>
-      ${isPhone?'<button class="iconbtn bag" aria-label="Inventory"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 5h10l-1 9H4z"/><path d="M6 5V3.5a2 2 0 0 1 4 0V5"/></svg></button>':''}
+    <span class="arena"></span><div class="right"><span class="evchip"></span><span class="rh"></span><span class="when"></span><span class="alv"><strong class="alive"></strong><em> alive</em></span><button class="iconbtn tribbtn" aria-label="Tributes" title="Tributes"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><circle cx="5.6" cy="5.4" r="1.9"/><circle cx="10.8" cy="6" r="1.5"/><path d="M2.4 12.6c.5-2.2 1.8-3.2 3.2-3.2s2.7 1 3.2 3.2"/><path d="M9.6 12.2c.4-1.6 1.1-2.4 2.1-2.4s1.7.8 2 2.4"/></svg></button>
     </div>
   </header>
   ${isPhone?`<div class="drawer"><div class="slot">Club <span>in hand</span></div><div class="slot">Bandages <span>2 uses left</span></div><div class="slot">Empty <span>—</span></div></div>`:''}
@@ -1424,6 +1437,8 @@ function makeView(root,isPhone){
     root.querySelector(".words").innerHTML=words;root.querySelector(".words").title=cw.map(c=>c[0]).join(", ");root.querySelector(".pop").innerHTML=wordsAll;
     const INV=inventory();const slotHTML=INV.map(it=>`<button class="slot2 ${catOf(it.base)} ${it.held?"held":""} ${it.dim?"dim":""} ${openItem===it.id?"open":""}" data-item="${it.id}" title="${it.n}">${it.ic}${it.q>1?`<i>${it.q}</i>`:""}</button>`).join("")+Array.from({length:Math.max(0,5-INV.length)},()=>'<span class="slot2 empty"></span>').join("");
     root.querySelector(".carry").innerHTML=slotHTML;
+    {const bb=root.querySelector(".bagbtn");if(bb){const n=INV.length;const prev=+(bb.dataset.n||0);bb.dataset.n=n;const bn=bb.querySelector(".bagn");bn.textContent=n;bn.style.display=n?"":"none";
+      if(n>prev){bb.classList.remove("new");void bb.offsetWidth;bb.classList.add("new")}}}
     root.querySelector(".rh").innerHTML=PH.map((p,k)=>`<i class="${k<state.pi?"done":k===state.pi?"now":""}" title="${p}"></i>`).join("")+`<i class="moon">☾</i>`;
     root.querySelector(".when").textContent=isPhone?`D${state.day} · ${state.phase}`:`Day ${state.day} · ${state.phase}`;
     const drawerEl=root.querySelector(".drawer");if(drawerEl)drawerEl.innerHTML=`<div class="dslots">${slotHTML}</div><div class="ipop in"></div>`;
@@ -1678,9 +1693,9 @@ function makeView(root,isPhone){
   // bars: tap shows words
   const bars=root.querySelector(".bars"),pop=root.querySelector(".pop");
   bars.addEventListener("click",e=>{e.stopPropagation();pop.classList.toggle("on")});
-  const bag=root.querySelector(".bag"),drawer=root.querySelector(".drawer");
+  const bag=root.querySelector(".bagbtn"),drawer=root.querySelector(".drawer");
   if(bag)bag.addEventListener("click",e=>{e.stopPropagation();drawer.classList.toggle("on")});
-  root.addEventListener("click",e=>{if(!e.target.closest(".more")){const m=act.querySelector(".menu");if(m)m.classList.remove("on")}if(!bars.contains(e.target))pop.classList.remove("on");if(drawer&&!drawer.contains(e.target)&&e.target!==bag)drawer.classList.remove("on")});
+  root.addEventListener("click",e=>{if(!e.target.closest(".more")){const m=act.querySelector(".menu");if(m)m.classList.remove("on")}if(!bars.contains(e.target))pop.classList.remove("on");if(drawer&&!drawer.contains(e.target)&&!(bag&&bag.contains(e.target)))drawer.classList.remove("on")});
   return{render,modalOnly(){renderModal();root.querySelector('.alive').textContent=state.alive},resetCam(){sel=null;cam.px=0;cam.py=0;cam.whole=false;if(cam.z<Z0*.8)cam.z=Z0}};
 }
 // one full-screen view; phone layout under 760px wide
