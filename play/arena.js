@@ -431,10 +431,10 @@ function startEncounter(career,who,free){state.calm=0;let pool=atCell(state.you)
   const group=foe.pack?atCell(state.you).filter(r=>r.pack&&r!==foe):[];if(group.length)read.unshift(`${group.length===1?"One more":group.length+" more"} behind ${pr(foe).o}`);
   const here=cells[state.you];const unaware=!free&&!career&&Math.random()<(.15+SETUP.P*.035)*(here.tags.includes("exposed")?.5:1)*(state.camo>0?1.6:1)*(group.length?.5:1);
   state.modal={k:"enc",foe,disp:group.length&&!CAREER_ME?"hostile":disp,posture:unaware?`${P.S} hasn't seen you. ${P.S}'s crouched over something, back turned.`:posture,read,group:group.length,free:!!free,rel:relLine(foe),where:here.name,unaware};rerenderAll()}
-function winChance(f,disp){const m=state.modal;return Math.min(.92,Math.max(.06,1-f.str-(f.wpow||0)-(m&&m.group?.15*m.group:0)+weaponPow()+(SETUP.S-6)*.03+(f.hurt?.15:0)+(disp==="open"?.15:0)+.15*Math.min(2,state.allies.length)+(m&&m.unaware?.22:0)))}
+function winChance(f,disp){const m=state.modal;return Math.min(.92,Math.max(.06,1-f.str-(f.wpow||0)-(m&&m.group?.15*m.group:0)+weaponPow()+(SETUP.S-6)*.03+(f.hurt?.15:0)+(disp==="open"?.15:0)+.15*Math.min(2,state.allies.length)+(m&&m.unaware?.22:0)+(hasShield()?.08:0)))}
 function allyChance(f,m){let c=f===PARTNER?.8:(f.career&&CAREER_ME)?.65:(!f.career&&!CAREER_ME)?.45:.15;if(m.disp==="hostile")c*=.2;if(m.disp==="open")c+=.15;if(f.know&&f.know.rel==="friendly")c+=.15;if(state.allies.length>=2)c*=.6;return Math.min(.92,c)}
 function encFore(o,m){const f=m.foe;const mine=state.held?IT[state.held.id].n.split(" ")[0]:"Fists";const theirs=f.weapon==="bare hands"?"fists":f.weapon;
-  if(o==="fight")return(m.unaware?"Strike first. ":"")+`${mine} vs ${theirs}.`+(state.allies.length?` ${state.allies[0].n} with you.`:"");
+  if(o==="fight")return(m.unaware?"Strike first. ":"")+`${mine} vs ${theirs}.`+(hasShield()?" Shield up.":"")+(state.allies.length?` ${state.allies[0].n} with you.`:"");
   if(o==="talk")return"Guard down.";
   if(o==="ally")return f===PARTNER?"Same district.":"Ask for help.";
   return m.unaware?"They'll never know.":f.pack||m.group?"Careers run fast.":"They'll see you go."}
@@ -447,16 +447,16 @@ function takeSpoils(f){const out={t:"",fx:[]};const id=WID[f.weapon];
   return out}
 function dropInRush(){if(Math.random()>.3)return null;if(state.bread>0){state.bread--;return"some food"}const g=state.gear.filter(x=>x!==state.held);if(g.length){const x=g[Math.floor(Math.random()*g.length)];state.gear.splice(state.gear.indexOf(x),1);return"the "+IT[x.id].n.toLowerCase()}return null}
 function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(o);const f=m.foe,P=pr(f),here=cells[state.you].name.toLowerCase();let v,tone,t,fx=[];
-  const hurt=(n,bleed,cause)=>{state.hp-=soften(n);if(bleed)state.bleed=true;state.pendingKiller=f;state.pendingCause=cause;allyHarm(.3,`${f.n} turns on ${pr(f).o} next.`)};
+  const hurt=(n,bleed,cause)=>{state.hp-=soften(n);if(bleed&&!shieldStopsBleed())state.bleed=true;state.pendingKiller=f;state.pendingCause=cause;allyHarm(.3,`${f.n} turns on ${pr(f).o} next.`)};
   if(o==="ally"){if(Math.random()<allyChance(f,m)){state.allies.push(f);f.ally=true;f.pack=false;f.at=state.you;know(f,"ally","your ally");v=`${f.n} joins you`;tone="green";
       t=f===PARTNER?`"Same district. Same odds." ${P.S} falls in beside you.`:f.career&&CAREER_ME?`"Fine. But when it's just us, it's just us." ${P.S} grins and doesn't mean it as a joke.`:`A long silence. Then ${P.s} nods. "Until it's just us."`;fx=[["+ ally","g"]];M(`${f.n} of District ${f.d} became your ally.`)}
     else if(m.disp==="hostile"){hurt(10,false,`${f.n} of District ${f.d} didn't want a friend.`);know(f,"hostile","attacked you");v=`${f.n} laughed — then attacked`;tone="red";t=`You hold out your hand. ${P.S} answers with the ${f.weapon==="bare hands"?"fist":f.weapon}.`;fx=[["− hurt","r"]]}
     else{know(f,"neutral","said no to an alliance");v=`${f.n} says no`;tone="amber";t=`"Not today." ${P.S} backs away, watching you until ${P.s}'s gone.`;fx=[["no ally","m"]]}
-    L(`${v}. ${t}`);m.res={v,tone,t,fx};return rerenderAll()}
+    if(!state.bleed)fx=fx.filter(x=>x[0]!=="bleeding");if(state.shieldNote){fx.push([state.shieldNote,"b"]);state.shieldNote=null}L(`${v}. ${t}`);m.res={v,tone,t,fx};return rerenderAll()}
   if(o==="fight"){if(Math.random()<winChance(f,m.disp)){if(state.day===1&&state.pi===0)state.bb.won=f.n;
       const wc=winChance(f,m.disp),cost=Math.round(16*(1-wc))+2;state.bold=(state.bold||0)+2;state.calm=0;const spoils=takeSpoils(f);
-      if(Math.random()<.6+(f.hurt?.2:0)+(m.unaware?.15:0)){kill(f,"Killed by you",cells[state.you].name);state.kills++;state.hp-=cost;state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`${m.unaware?"They never saw you coming. ":""}It's fast and ugly, and then it's over. A cannon, right above you.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You killed ${f.n} of District ${f.d}.`)}
-      else{state.hp-=cost;state.bread++;know(f,"hostile","you drove them off");v=`${f.n} ran`;tone="green";t=`You land the first blow. ${P.S} breaks and runs, dropping what ${P.s} carried.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You drove off ${f.n}.`)}}
+      if(Math.random()<.6+(f.hurt?.2:0)+(m.unaware?.15:0)){kill(f,"Killed by you",cells[state.you].name);state.kills++;state.hp-=soften(cost);state.bread++;state.cannon={dir:"here",name:f.n};v=`You killed ${f.n}`;tone="gold";t=`${m.unaware?"They never saw you coming. ":""}It's fast and ugly, and then it's over. A cannon, right above you.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You killed ${f.n} of District ${f.d}.`)}
+      else{state.hp-=soften(cost);state.bread++;know(f,"hostile","you drove them off");v=`${f.n} ran`;tone="green";t=`You land the first blow. ${P.S} breaks and runs, dropping what ${P.s} carried.${spoils.t}`;fx=[["− hurt","r"],["+ food","g"],...spoils.fx];M(`You drove off ${f.n}.`)}}
     else{know(f,"hostile","nearly killed you");hurt(24,true,`${f.n} of District ${f.d} found you in the ${here}. The wound never closed.`);v=`${f.n} beat you`;tone="red";t=`The ${f.weapon==="bare hands"?"fists come":f.weapon+" comes"} faster than you thought. You get away, bleeding.`;fx=[["badly hurt","r"],["bleeding","r"]];M(`${f.n} nearly killed you.`)}}
   else if(o==="talk"){const r=Math.random();
     if(m.disp==="hostile"&&r<.8||m.disp==="wary"&&r<.45||m.disp==="open"&&r<.2){
@@ -468,7 +468,7 @@ function resolveEnc(o){const m=state.modal;if(m.k==="beast")return resolveBeast(
   else{const tired=(state.hp<40?.15:0)+(state.en<30?.12:0)-(SETUP.D-6)*.03;const catchP=m.unaware?0:Math.max(0,(f.pack||m.group?.45:m.disp==="hostile"?.35:m.disp==="wary"?.12:0)+(m.disp==="open"?0:tired));
     if(Math.random()<catchP){know(f,"hostile","chased you");hurt(8,false,`${f.n} of District ${f.d} ran you down in the ${here}.`);v=`${f.n} caught you`;tone="red";t=`You turn to go; ${P.s}'s faster. A blow across the back before you break free.`;fx=[["− hurt","r"]]}
     else{if(state.prev!=null&&state.prev!==state.you){state.you=state.prev;state.allies.forEach(a=>a.at=state.you);views.forEach(v=>v.resetCam())}else{const nb=cells[state.you].nb.filter(n=>!cells[n].closed);if(nb.length){state.you=nb[0];views.forEach(v=>v.resetCam())}}v="You got away";tone="amber";t=m.unaware?`${P.S} never even turned around.`:`You back away the way you came. ${P.S} doesn't follow.`;fx=[["safe","m"]];if(!m.unaware){const lost=dropInRush();if(lost){t+=` You lost ${lost} in the rush.`;fx.push(["− "+lost,"r"])}}}}
-  L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
+  if(!state.bleed)fx=fx.filter(x=>x[0]!=="bleeding");if(state.shieldNote){fx.push([state.shieldNote,"b"]);state.shieldNote=null}L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
 // ---------- creatures (Gamemaker mutts) ----------
 const art=w=>/^[aeiou]/i.test(w)?"an":"a";
 function beastName(cr){return cr.mod&&!cr.n.toLowerCase().includes(cr.mod[0].toLowerCase())?`${cr.mod[0]} ${cr.n}`:cr.n}
@@ -495,22 +495,22 @@ function startBeast(c,came){state.calm=0;const cr=c.creature;const P=prof(cr);co
   const read=[cr.hi>=25?"Bigger than anything should be":cr.hi>=16?"Big, and fast":"Small, but not harmless",cr.mod&&cr.mod[1]==="poison"?"Something wet on its fangs":cr.mod&&cr.mod[1]==="weak"?"It's hurt":cr.mod&&cr.mod[0]==="Blind"?"Its eyes are milk-white":"Made, not born"];
   read.splice(1,0,P.read);
   state.modal={k:"beast",c:c.i,cr,noticed,read,where:c.name,came:came||null};rerenderAll()}
-function beastFore(o,m){const cr=m.cr;const odds=(cr.hi<=15?.7:cr.hi<=25?.45:.25)+weaponPow()+(SETUP.S-6)*.03+(m.cr.mod&&m.cr.mod[1]==="weak"?.2:0)+.12*Math.min(2,state.allies.length);m.odds=odds;
-  if(o==="fight")return`${state.held?IT[state.held.id].n.split(" ")[0]:"Fists"} vs that.`;
+function beastFore(o,m){const cr=m.cr;const odds=(cr.hi<=15?.7:cr.hi<=25?.45:.25)+weaponPow()+(SETUP.S-6)*.03+(m.cr.mod&&m.cr.mod[1]==="weak"?.2:0)+.12*Math.min(2,state.allies.length)+(hasShield()?.08:0);m.odds=odds;
+  if(o==="fight")return`${state.held?IT[state.held.id].n.split(" ")[0]:"Fists"} vs that.`+(hasShield()?" Shield up.":"");
   if(o==="still")return"Don't move.";
   return"Slowly."}
 function resolveBeast(o){const m=state.modal,cr=m.cr,c=cells[m.c],nm=beastName(cr),here=c.name.toLowerCase();beastFore("fight",m);let v,tone,t,fx=[];
   const bite=(mult)=>{allyHarm(.3,`The ${cr.n.toLowerCase()} doesn't stop at you.`);const d=soften(Math.round(beastDmg(cr)*mult));state.hp-=d;state.pendingCause=`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm.toLowerCase()} found you in the ${here}.`;state.pendingKiller=null;
     if(cr.mod&&cr.mod[1]==="poison"){state.poison=3;state.poisonCause=`The ${nm.toLowerCase()}'s venom worked through you.`;fx.push(["poisoned","y"])}return d};
   if(o==="fight"){if(Math.random()<m.odds){c.creature=null;bite(.4);state.bread+=1;v=`You killed the ${cr.n}`;tone="gold";t=`It goes down thrashing. You're shaking, and bleeding a little, and alive. There's meat on it.`;fx.unshift(["− hurt","r"],["+ food","g"]);M(`You killed ${art(nm)} ${nm}.`)}
-    else{bite(1);state.bleed=true;v=`The ${cr.n} mauled you`;tone="red";t=`It's on you before you can swing. You tear free and run.`;fx.unshift(["badly hurt","r"],["bleeding","r"]);M(`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm} nearly killed you.`);
+    else{bite(1);if(!shieldStopsBleed())state.bleed=true;v=`The ${cr.n} mauled you`;tone="red";t=`It's on you before you can swing. You tear free and run.`;fx.unshift(["badly hurt","r"],["bleeding","r"]);M(`${art(nm)[0].toUpperCase()+art(nm).slice(1)} ${nm} nearly killed you.`);
       if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);if(nb[0]){state.you=nb[0].i;views.forEach(v=>v.resetCam())}}else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}}
   else if(o==="still"){const P=prof(cr);if(Math.random()<(m.noticed?P.still*.5:Math.max(.75,P.still))){v="It passed you by";tone="green";t=`You don't breathe. The ${cr.n.toLowerCase()} sniffs the air, turns, and is gone into the ${here}.`;fx=[["unseen","b"]];const to=c.nb.map(n=>cells[n]).find(x=>!x.closed&&!x.creature&&x.i!==state.you);if(to){to.creature=cr;c.creature=null}}
     else{bite(.8);v=`The ${cr.n} found you`;tone="red";t="Keeping still was a mistake. It was already looking at you.";fx.unshift(["− hurt","r"])}}
   else{const P=prof(cr);if(Math.random()<(m.noticed?P.flee*(m.came?.7:1):P.flee*.3)){bite(.5);v="It caught you as you ran";tone="red";t=`Claws across your back, then you're out of the ${here}.`;fx.unshift(["− hurt","r"])}else{v="You got away";tone="amber";t=`You back out the way you came. Behind you, the ${cr.n.toLowerCase()} settles back into the ${here}.`;fx=[["safe","m"]];if(m.noticed){const lost=dropInRush();if(lost){t+=` You lost ${lost} in the rush.`;fx.push(["− "+lost,"r"])}}}
     if(m.came){const nb=c.nb.map(n=>cells[n]).filter(x=>!x.closed&&!x.creature&&!x.burning);const to=nb.find(x=>x.i===state.prev)||nb[0];if(to){state.you=to.i;to.seen=true;views.forEach(v=>v.resetCam())}}
     else if(state.prev!=null){state.you=state.prev;views.forEach(v=>v.resetCam())}}
-  refreshSenses();L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
+  if(!state.bleed)fx=fx.filter(x=>x[0]!=="bleeding");if(state.shieldNote){fx.push([state.shieldNote,"b"]);state.shieldNote=null}refreshSenses();L(`${v}. ${t}`);m.res={v,tone,t,fx};rerenderAll()}
 function finishEnc(){const m=state.modal,r=m.res;state.modal=null;state.fx=r.fx;if(m.foe&&!m.foe.dead&&!m.foe.ally&&m.foe.at===state.you){const nb=cells[state.you].nb.filter(n=>!cells[n].closed&&!cells[n].closing);if(nb.length){const to=nb[Math.floor(Math.random()*nb.length)];(m.foe.pack?atCell(state.you).filter(x=>x.pack):[m.foe]).forEach(x=>x.at=to)}}presence();refreshSenses();if(state.hp<=0){die(state.pendingCause||"It was over before you knew it.");return rerenderAll()}if(m.free)return rerenderAll();advance()}
 READY=true;state.sp={favor:0,gifts:0,lastKills:0};state.kills=0;
 function dropAlly(a){state.allies=state.allies.filter(x=>x!==a);a.ally=false;a.suspicious=false}
@@ -627,7 +627,10 @@ const icOf=id=>ITEMIC[id]||(id==="bottle"?ITEMIC.flask:id==="food"?ITEMIC.bread:
 Object.assign(state,{gear:[],held:null,camo:0,net:null,flask:-1});
 const weaponPow=()=>state.held?IT[state.held.id].pow:-.08;
 const hasShield=()=>state.gear.some(g=>g.id==="shield");
-const soften=n=>Math.round(n*(hasShield()?.7:1)*(state.allies.length?.85:1));
+function soften(n){let d=n*(state.allies.length?.85:1);if(hasShield()&&n>0){d*=.65;state.shieldNote=state.shieldNote||"shield took the blow";
+    if(n>=18&&Math.random()<.12){const g=state.gear.find(x=>x.id==="shield");state.gear.splice(state.gear.indexOf(g),1);state.shieldNote="your shield split";L("The blow splits your shield in two. You let it fall.")}}return Math.round(d)}
+// a shield can turn a blade before it opens you up
+const shieldStopsBleed=()=>hasShield()&&Math.random()<.4&&(state.shieldNote="the shield turned the edge");
 // add an item; returns a sentence fragment
 function addItem(id){
   if(id==="band"){state.band+=2;return"two rolls of bandage"}
@@ -679,7 +682,7 @@ function inventory(){const you=cells[state.you];const out=[];
   state.gear.forEach((g,i)=>{const d=IT[g.id];const held=state.held===g;const acts=[],free=[];
     if(d.k==="weapon")free.push(held?["unhold:"+i,"Put it away"]:["hold:"+i,"Take it in hand"]);
     if(g.id==="camo")acts.push(["camo:"+i,"Smear it on"]);if(g.id==="net")acts.push(["net:"+i,"Set it as a trap"]);if(g.id==="potion")acts.push(["potion:"+i,"Drink it"]);if(g.id==="stim")acts.push(["stim:"+i,"Inject it"]);
-    out.push({id:"g"+i,base:g.id,n:d.n,ic:icOf(g.id),held,sub:held?"In hand":d.k==="weapon"?"In your bag":g.id==="shield"?"Strapped to your arm. Blows land softer.":g.id==="potion"?"Could be medicine. Could be poison.":g.id==="camo"?"Mud-green, sticky.":g.id==="net"?"Strong cord, a few hooks.":"",acts,free})});
+    out.push({id:"g"+i,base:g.id,n:d.n,ic:icOf(g.id),held,sub:held?"In hand":d.k==="weapon"?"In your bag":g.id==="shield"?"On your arm. Takes a third of every blow, sometimes stops a cut. A heavy hit can split it.":g.id==="potion"?"Could be medicine. Could be poison.":g.id==="camo"?"Mud-green, sticky.":g.id==="net"?"Strong cord, a few hooks.":"",acts,free})});
   if(state.band>0)out.push({id:"band",base:"band",n:"Bandages",ic:ITEMIC.band,q:state.band,sub:state.band>1?`${state.band} rolls`:"One roll left",acts:[["bandage",state.bleed?"Bind the wound":"Re-dress your wounds"]],free:[]});
   if(state.bread>0)out.push({id:"bread",base:"bread",n:"Food",ic:ITEMIC.bread,q:state.bread,sub:state.bread>1?`Enough for ${state.bread} meals`:"One meal",acts:[["eat","Eat"]],free:[]});
   if(state.flask>=0)out.push({id:"flask",base:"flask",n:"Water bottle",ic:ITEMIC.flask,dim:!state.flask,sub:state.flask?"Full":you.water?"Empty — there's water here":"Empty",acts:state.flask?[["drink","Drink"]]:you.water?[["drinkHere","Drink and fill it"]]:[],free:[]});
